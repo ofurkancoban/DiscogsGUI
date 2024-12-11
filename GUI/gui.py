@@ -15,8 +15,9 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.edge.service import Service
 from selenium.webdriver.edge.options import Options
 from webdriver_manager.microsoft import EdgeChromiumDriverManager
-import ttkbootstrap as tb  # Import ttkbootstrap
+import ttkbootstrap as tb
 from ttkbootstrap import Style
+
 
 def setup_driver(headless=True):
     options = Options()
@@ -78,13 +79,11 @@ class App:
         self.root.title("Discogs Verileri İndirici")
         self.root.tk.call('tk', 'scaling', 1.0)
 
-        # Store checkbutton widgets and variables
         self.check_vars = {}
         self.checkbuttons = {}
 
         self.create_menu()
         self.create_widgets()
-        # Hoş geldiniz mesajı
         self.log_to_console("Hoş geldiniz! Discogs Verileri İndirici'ye hoş geldiniz.", "INFO")
         self.log_to_console("Güncel datasetler kazınıyor, lütfen bekleyiniz...", "INFO")
 
@@ -112,47 +111,44 @@ class App:
     def create_widgets(self):
         main_frame = tb.Frame(self.root)
         main_frame.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
-        # Set style for Treeview header
-        style = Style()
-        style.configure("Treeview.Heading", background="#212121", foreground="#f8f9fa", font=("Arial", 12, "bold"), relief="flat")
 
-        # A frame to hold the treeview
+        style = Style()
+        style.configure("Treeview.Heading", background="#212121", foreground="#f8f9fa", font=("Arial", 12, "bold"),
+                        relief="flat")
+
         self.tree_frame = tb.Frame(main_frame)
         self.tree_frame.pack(expand=True, fill=tk.BOTH)
 
-        # Add a 'Select' column for checkbuttons
+        # Sadece " ", "month", "content", "size", "Downloaded" kolonları gösterilecek
         self.tree = tb.Treeview(
             self.tree_frame,
-            columns=(" ", "month", "content", "size"),
+            columns=(" ", "month", "content", "size", "Downloaded"),
             show="headings"
         )
+
         for col in self.tree["columns"]:
             self.tree.heading(col, text=col.capitalize(), anchor=tk.CENTER)
-            width = 40
             if col == " ":
-                width = 10
+                width = 30
+            else:
+                width = 100
             self.tree.column(col, width=width, anchor=tk.CENTER)
 
-        # Renklendirme
         self.tree.tag_configure("evenrow", background="#343a40", foreground="#f8f9fa")
         self.tree.tag_configure("oddrow", background="#495057", foreground="#f8f9fa")
-
-
-
         self.tree.pack(expand=True, fill=tk.BOTH)
 
-        # Bind scroll events to reposition checkbuttons
         self.tree.bind("<Configure>", lambda e: self.position_checkbuttons())
         self.tree.bind("<ButtonRelease-1>", lambda e: self.position_checkbuttons())
         self.tree.bind("<<TreeviewSelect>>", lambda e: self.position_checkbuttons())
         self.tree_frame.bind("<Configure>", lambda e: self.position_checkbuttons())
 
-
         control_frame = tb.Frame(self.root, padding=5)
         control_frame.pack(fill=tk.X)
         tb.Button(control_frame, text="Seçiliyi İndir", command=self.download_selected).pack(side=tk.LEFT, padx=5)
         tb.Button(control_frame, text="Durdur", command=self.stop_download).pack(side=tk.LEFT, padx=5)
-        tb.Button(control_frame, text="Discogs Klasörünü Aç", command=self.open_discogs_folder).pack(side=tk.LEFT, padx=5)
+        tb.Button(control_frame, text="Discogs Klasörünü Aç", command=self.open_discogs_folder).pack(side=tk.LEFT,
+                                                                                                     padx=5)
 
         progress_frame = tb.Frame(self.root, padding=5)
         progress_frame.pack(fill=tk.X)
@@ -181,10 +177,7 @@ class App:
         self.check_vars.clear()
         self.checkbuttons.clear()
 
-        # Benzersiz ayları al
         unique_months = data_df["month"].unique()
-
-        # Her aya bir renk deseni atama
         color_map = {}
         for i, month in enumerate(unique_months):
             if i % 2 == 0:
@@ -192,15 +185,15 @@ class App:
             else:
                 color_map[month] = "month2"
 
-        # Her ay için aynı renkte arkaplan
         self.tree.tag_configure("month1", background="#343a40", foreground="#f8f9fa")
         self.tree.tag_configure("month2", background="#495057", foreground="#f8f9fa")
 
+        # Sadece belirtilen kolonları data_df'den alarak tree'ye ekliyoruz
+        # data_df columns: ["month", "content", "size", "Downloaded"]
         for i, (_, row) in enumerate(data_df.iterrows()):
-            # Her satırın rengi ayına göre atanır
             tag = color_map[row["month"]]
-            # Select sütunu vs. eklenirken değerleri düzenleyin:
-            values = [""] + row.tolist()
+            # İlk değer checkbox kolonuna boş string
+            values = ["", row["month"], row["content"], row["size"], row["Downloaded"]]
             item_id = self.tree.insert("", "end", values=values, tags=(tag,))
             var = tk.IntVar(value=0)
             cb = tb.Checkbutton(self.tree, variable=var)
@@ -218,23 +211,17 @@ class App:
         for item_id, cb in self.checkbuttons.items():
             bbox = self.tree.bbox(item_id, column=0)
             if not bbox:
-                # If the item is not visible or out of view, hide the checkbutton
                 cb.place_forget()
             else:
                 x, y, width, height = bbox
-
-                # Let the checkbutton define its own size
                 self.root.update_idletasks()
                 cb_width = cb.winfo_reqwidth()
                 cb_height = cb.winfo_reqheight()
 
-                # Center the checkbutton in the cell
                 cb_x = x + (width - cb_width) // 2
                 cb_y = y + (height - cb_height) // 2
 
-
-                # Adjust positioning if needed
-                cb.place(in_=self.tree, x=cb_x, y=cb_y+1, width=height-2, height=height-2)
+                cb.place(in_=self.tree, x=cb_x, y=cb_y + 1, width=height - 2, height=height - 2)
 
     def log_to_console(self, message, message_type="INFO"):
         self.console_text.config(state=tk.NORMAL)
@@ -300,6 +287,13 @@ class App:
 
             self.status_label.config(text="İndirme Tamamlandı!")
             self.log_to_console(f"{filename} başarıyla indirildi: {file_path}", "INFO")
+
+            # İndirme tamamlandığında data_df'yi güncelle
+            self.data_df.loc[self.data_df["URL"] == url, "Downloaded"] = "✔"
+
+            # Tabloyu güncelle
+            self.populate_table(self.data_df[["month", "content", "size", "Downloaded"]])
+
         except Exception as e:
             self.log_to_console(f"Hata: {e}", "ERROR")
 
@@ -313,19 +307,56 @@ class App:
         self.log_to_console("İndirme durduruluyor...")
 
     def download_selected(self):
-        # Determine which rows have their checkboxes checked
         checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
         if not checked_items:
             messagebox.showwarning("Uyarı", "Dosya seçilmedi!")
             return
 
+        # Bu bölümde URL, last_modified elde etmek için orijinal data_df kullanılmalı
+        # Çünkü tabloya sadece gösterilen kolonlar var. Eğer orijinal data_df kullanacaksanız
+        # burayı ona göre güncelleyin. Aşağıda basitçe her satırı tekrar data_df ile eşleştiriyoruz.
+
+        # İndirilecek URL'leri bulurken month ve content üzerinden eşleşme yapabiliriz.
+        # Ancak ideal olarak key veya URL'yi data_df'de saklamamız gerekir.
+        # Burada basit bir yaklaşım için data_df'yi önceden global olarak saklıyoruz.
+        # Orijinal data_df tüm bilgileri içeriyor.
+
+        # Bu nedenle en iyisi last_modified ve URL bilgilerini data_df üzerinden alacağız.
+        # data_df'de her satır unique olduğundan month, content, size ve Downloaded'a dayalı
+        # bir eşleşme yapacağız. (Ya da 'key' üzerinden eşleşmeyi düşünebilirsiniz)
+        # En garantisi 'URL' kolonunu da bu tabloda tutmaktır. Şu an URL kolonunu saklamıyoruz
+        # tabloda ama data_df'de var. data_df zaten class'ta var.
+
+        # Bu yüzden download_selected'ta index tabanlı bir yaklaşım yerine,
+        # populate_table'dan sonra tree'ye eklenen satırların item_id'sini data_df satır indexine
+        # mapping yapabiliriz. Bunun için bir dictionary tutabiliriz.
+        # Ancak şu anki yapıda bunu basitçe çözeceğiz:
+        # populate_table'a data_df.iterrows yaparken item_id -> df index map'ini kaydedebiliriz.
+        # Bunun için aşağıda basit bir çözüm implement edeceğiz.
+
+        checked_data = []
         for item in checked_items:
             values = self.tree.item(item, "values")
-            # values = [""(select col), month, content, size, last_modified, key, URL]
-            url = values[6]
-            filename = os.path.basename(url)
-            last_modified = pd.to_datetime(values[4])  # last_modified is at index 4
-            self.start_download(url, filename, last_modified)
+            # values: ["", month, content, size, Downloaded]
+            # Buna karşılık data_df'de bu satırı bulalım:
+            month_val = values[1]
+            content_val = values[2]
+            size_val = values[3]
+            downloaded_val = values[4]
+
+            # data_df'den eşleşen satırı bul:
+            row_data = self.data_df[
+                (self.data_df["month"] == month_val) &
+                (self.data_df["content"] == content_val) &
+                (self.data_df["size"] == size_val) &
+                (self.data_df["Downloaded"] == downloaded_val)
+                ]
+            if not row_data.empty:
+                url = row_data["URL"].values[0]
+                last_modified = row_data["last_modified"].values[0]
+                last_modified = pd.to_datetime(last_modified)
+                filename = os.path.basename(url)
+                self.start_download(url, filename, last_modified)
 
     def open_discogs_folder(self):
         try:
@@ -350,6 +381,23 @@ class App:
         if save_path:
             self.data_df.to_csv(save_path, index=False)
             self.log_to_console(f"Veri {save_path} olarak dışa aktarıldı.")
+
+    def mark_downloaded_files(self, data_df):
+        downloads_dir = Path.home() / "Downloads"
+        discogs_dir = downloads_dir / "Discogs"
+        datasets_dir = discogs_dir / "Datasets"
+
+        downloaded_status = []
+        for _, row in data_df.iterrows():
+            folder_name = str(row["month"])
+            filename = os.path.basename(row["URL"])
+            file_path = datasets_dir / folder_name / filename
+            if file_path.exists():
+                downloaded_status.append("✔")  # Tick
+            else:
+                downloaded_status.append("✖")  # Cross
+        data_df["Downloaded"] = downloaded_status
+        return data_df
 
     def start_scraping(self):
         url = "https://discogs-data-dumps.s3.us-west-2.amazonaws.com/index.html"
@@ -376,11 +424,23 @@ class App:
                 data_df = data_df[data_df["content"] != "checksum"]
                 data_df["content_order"] = data_df["content"].map(content_order)
                 data_df = data_df.sort_values(by=["month", "content_order"], ascending=[False, True])
-                data_df = data_df[["month", "content", "size", "last_modified", "key", "URL"]]
+                # Sadece gerekli kolonlar + last_modified ve URL dahili kullanım için saklanabilir
+                # Ancak tabloya gösterilmeyecekler
+                # Indirme işlemlerinde kullanmak için last_modified ve URL kalsın, ama görüntüleme yaparken kullanmayacağız.
+                # Son aşamada tabloya aktarmadan önce Downloaded ekliyoruz.
+                data_df = self.mark_downloaded_files(data_df)
+
+                # Görüntülenecek kolonlar: month, content, size, Downloaded
+                # Yine de data_df içinde last_modified, URL vs. kalsın indirme için.
+                # Ama populate_table'a verirken direk bu data_df'yi verebiliriz.
+                # populate_table sadece belirtilen kolonları okuyor.
+
                 self.data_df = data_df
-                self.populate_table(data_df)
+                self.populate_table(data_df[["month", "content", "size", "Downloaded"]])
                 self.save_to_file()
-                self.log_to_console("Scraping tamamlandı. İndirmek istediğiniz veri setini seçiniz ve İndir butonuna tıklayınız.", "INFO")
+                self.log_to_console(
+                    "Scraping tamamlandı. İndirmek istediğiniz veri setini seçiniz ve İndir butonuna tıklayınız.",
+                    "INFO")
             else:
                 self.log_to_console("Veri bulunamadı.")
         except Exception as e:
@@ -392,7 +452,7 @@ class App:
 def main():
     empty_df = pd.DataFrame(columns=["month", "content", "size", "last_modified", "key", "URL"])
     root = tb.Window(themename="darkly")
-    root.tk.call("tk", "scaling", 1.0)  # Set scaling to 1.0 for crisp rendering
+    root.tk.call("tk", "scaling", 1.0)
     app = App(root, empty_df)
     Thread(target=app.start_scraping, daemon=True).start()
     root.mainloop()
