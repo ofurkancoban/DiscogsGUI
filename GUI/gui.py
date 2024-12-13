@@ -76,7 +76,7 @@ class App:
         self.data_df = data_df
         self.stop_flag = False
 
-        self.root.title("Discogs Verileri İndirici")
+        self.root.title("Discogs Data Downloader")
         self.root.tk.call('tk', 'scaling', 1.0)
 
         self.check_vars = {}
@@ -84,10 +84,10 @@ class App:
 
         self.create_menu()
         self.create_widgets()
-        self.log_to_console("Hoş geldiniz! Discogs Verileri İndirici'ye hoş geldiniz.", "INFO")
-        self.log_to_console("Güncel datasetler kazınıyor, lütfen bekleyiniz...", "INFO")
+        self.log_to_console("Welcome! Welcome to the Discogs Data Downloader.", "INFO")
+        self.log_to_console("Fetching the latest datasets, please wait...", "INFO")
 
-        # Pencereyi ekranın ortasına yerleştir
+        # Center the window on the screen
         window_width = 300
         window_height = 600
         screen_width = self.root.winfo_screenwidth()
@@ -100,13 +100,13 @@ class App:
         menubar = tk.Menu(self.root)
         self.root.config(menu=menubar)
         file_menu = tk.Menu(menubar, tearoff=0)
-        file_menu.add_command(label="Çıkış", command=self.root.quit)
-        menubar.add_cascade(label="Dosya", menu=file_menu)
+        file_menu.add_command(label="Exit", command=self.root.quit)
+        menubar.add_cascade(label="File", menu=file_menu)
 
         help_menu = tk.Menu(menubar, tearoff=0)
-        help_menu.add_command(label="Hakkında",
-                              command=lambda: messagebox.showinfo("Hakkında", "Discogs Verileri İndirici"))
-        menubar.add_cascade(label="Yardım", menu=help_menu)
+        help_menu.add_command(label="About",
+                              command=lambda: messagebox.showinfo("About", "Discogs Data Downloader"))
+        menubar.add_cascade(label="Help", menu=help_menu)
 
     def create_widgets(self):
         main_frame = tb.Frame(self.root)
@@ -119,7 +119,7 @@ class App:
         self.tree_frame = tb.Frame(main_frame)
         self.tree_frame.pack(expand=True, fill=tk.BOTH)
 
-        # Sadece " ", "month", "content", "size", "Downloaded" kolonları gösterilecek
+        # Only " ", "month", "content", "size", "Downloaded" columns will be shown
         self.tree = tb.Treeview(
             self.tree_frame,
             columns=(" ", "month", "content", "size", "Downloaded"),
@@ -145,10 +145,10 @@ class App:
 
         control_frame = tb.Frame(self.root, padding=5)
         control_frame.pack(fill=tk.X)
-        tb.Button(control_frame, text="Seçiliyi İndir", command=self.download_selected).pack(side=tk.LEFT, padx=5)
-        tb.Button(control_frame, text="Durdur", command=self.stop_download).pack(side=tk.LEFT, padx=5)
-        tb.Button(control_frame, text="Discogs Klasörünü Aç", command=self.open_discogs_folder).pack(side=tk.LEFT,
-                                                                                                     padx=5)
+        tb.Button(control_frame, text="Download Selected", command=self.download_selected).pack(side=tk.LEFT, padx=5)
+        tb.Button(control_frame, text="Stop", command=self.stop_download).pack(side=tk.LEFT, padx=5)
+        tb.Button(control_frame, text="Open Discogs Folder", command=self.open_discogs_folder).pack(side=tk.LEFT,
+                                                                                                   padx=5)
 
         progress_frame = tb.Frame(self.root, padding=5)
         progress_frame.pack(fill=tk.X)
@@ -158,7 +158,7 @@ class App:
 
         self.status_label = tb.Label(
             self.root,
-            text="Hazır",
+            text="Ready",
             font=("Arial", 12),
             anchor="center"
         )
@@ -188,11 +188,11 @@ class App:
         self.tree.tag_configure("month1", background="#343a40", foreground="#f8f9fa")
         self.tree.tag_configure("month2", background="#495057", foreground="#f8f9fa")
 
-        # Sadece belirtilen kolonları data_df'den alarak tree'ye ekliyoruz
+        # Only the specified columns from data_df are inserted into the tree.
         # data_df columns: ["month", "content", "size", "Downloaded"]
         for i, (_, row) in enumerate(data_df.iterrows()):
             tag = color_map[row["month"]]
-            # İlk değer checkbox kolonuna boş string
+            # First value is an empty string for the checkbox column
             values = ["", row["month"], row["content"], row["size"], row["Downloaded"]]
             item_id = self.tree.insert("", "end", values=values, tags=(tag,))
             var = tk.IntVar(value=0)
@@ -252,13 +252,13 @@ class App:
             datasets_dir.mkdir(parents=True, exist_ok=True)
             file_path = datasets_dir / "discogs_dataset_list.csv"
             self.data_df.to_csv(file_path, sep="\t", index=False)
-            self.log_to_console(f"Veri {file_path} olarak kaydedildi.")
+            self.log_to_console(f"Data saved as {file_path}.")
         except Exception as e:
-            self.log_to_console(f"Hata: {e}")
+            self.log_to_console(f"Error: {e}")
 
     def download_file(self, url, filename, folder_name):
         try:
-            self.log_to_console("İndirme Başladı...", "INFO")
+            self.log_to_console("Download started...", "INFO")
             downloads_dir = Path.home() / "Downloads"
             discogs_dir = downloads_dir / "Discogs"
             datasets_dir = discogs_dir / "Datasets"
@@ -276,26 +276,26 @@ class App:
             with open(file_path, "wb") as file:
                 for data in response.iter_content(block_size):
                     if self.stop_flag:
-                        self.status_label.config(text="İndirme Durduruldu")
-                        self.log_to_console("İndirme Durduruldu", "WARNING")
+                        self.status_label.config(text="Download Stopped")
+                        self.log_to_console("Download Stopped", "WARNING")
                         return
                     file.write(data)
                     downloaded_size += len(data)
                     self.progress_var.set(downloaded_size)
                     percentage = (downloaded_size / total_size) * 100
-                    self.status_label.config(text=f"İndirme: %{percentage:.2f}")
+                    self.status_label.config(text=f"Downloading: %{percentage:.2f}")
 
-            self.status_label.config(text="İndirme Tamamlandı!")
-            self.log_to_console(f"{filename} başarıyla indirildi: {file_path}", "INFO")
+            self.status_label.config(text="Download Completed!")
+            self.log_to_console(f"{filename} successfully downloaded: {file_path}", "INFO")
 
-            # İndirme tamamlandığında data_df'yi güncelle
+            # Update data_df after download completion
             self.data_df.loc[self.data_df["URL"] == url, "Downloaded"] = "✔"
 
-            # Tabloyu güncelle
+            # Update the table
             self.populate_table(self.data_df[["month", "content", "size", "Downloaded"]])
 
         except Exception as e:
-            self.log_to_console(f"Hata: {e}", "ERROR")
+            self.log_to_console(f"Error: {e}", "ERROR")
 
     def start_download(self, url, filename, last_modified):
         self.stop_flag = False
@@ -304,53 +304,30 @@ class App:
 
     def stop_download(self):
         self.stop_flag = True
-        self.log_to_console("İndirme durduruluyor...")
+        self.log_to_console("Stopping the download...")
 
     def download_selected(self):
         checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
         if not checked_items:
-            messagebox.showwarning("Uyarı", "Dosya seçilmedi!")
+            messagebox.showwarning("Warning", "No file selected!")
             return
 
-        # Bu bölümde URL, last_modified elde etmek için orijinal data_df kullanılmalı
-        # Çünkü tabloya sadece gösterilen kolonlar var. Eğer orijinal data_df kullanacaksanız
-        # burayı ona göre güncelleyin. Aşağıda basitçe her satırı tekrar data_df ile eşleştiriyoruz.
-
-        # İndirilecek URL'leri bulurken month ve content üzerinden eşleşme yapabiliriz.
-        # Ancak ideal olarak key veya URL'yi data_df'de saklamamız gerekir.
-        # Burada basit bir yaklaşım için data_df'yi önceden global olarak saklıyoruz.
-        # Orijinal data_df tüm bilgileri içeriyor.
-
-        # Bu nedenle en iyisi last_modified ve URL bilgilerini data_df üzerinden alacağız.
-        # data_df'de her satır unique olduğundan month, content, size ve Downloaded'a dayalı
-        # bir eşleşme yapacağız. (Ya da 'key' üzerinden eşleşmeyi düşünebilirsiniz)
-        # En garantisi 'URL' kolonunu da bu tabloda tutmaktır. Şu an URL kolonunu saklamıyoruz
-        # tabloda ama data_df'de var. data_df zaten class'ta var.
-
-        # Bu yüzden download_selected'ta index tabanlı bir yaklaşım yerine,
-        # populate_table'dan sonra tree'ye eklenen satırların item_id'sini data_df satır indexine
-        # mapping yapabiliriz. Bunun için bir dictionary tutabiliriz.
-        # Ancak şu anki yapıda bunu basitçe çözeceğiz:
-        # populate_table'a data_df.iterrows yaparken item_id -> df index map'ini kaydedebiliriz.
-        # Bunun için aşağıda basit bir çözüm implement edeceğiz.
-
-        checked_data = []
         for item in checked_items:
             values = self.tree.item(item, "values")
             # values: ["", month, content, size, Downloaded]
-            # Buna karşılık data_df'de bu satırı bulalım:
+            # Find this row in data_df:
             month_val = values[1]
             content_val = values[2]
             size_val = values[3]
             downloaded_val = values[4]
 
-            # data_df'den eşleşen satırı bul:
+            # Locate matching row in data_df:
             row_data = self.data_df[
                 (self.data_df["month"] == month_val) &
                 (self.data_df["content"] == content_val) &
                 (self.data_df["size"] == size_val) &
                 (self.data_df["Downloaded"] == downloaded_val)
-                ]
+            ]
             if not row_data.empty:
                 url = row_data["URL"].values[0]
                 last_modified = row_data["last_modified"].values[0]
@@ -363,8 +340,8 @@ class App:
             downloads_dir = Path.home() / "Downloads"
             discogs_dir = downloads_dir / "Discogs"
             if not discogs_dir.exists():
-                self.log_to_console(f"{discogs_dir} klasörü bulunamadı!")
-                messagebox.showerror("Hata", f"{discogs_dir} klasörü bulunamadı!")
+                self.log_to_console(f"{discogs_dir} folder not found!")
+                messagebox.showerror("Error", f"{discogs_dir} folder not found!")
                 return
             if platform.system() == "Windows":
                 os.startfile(discogs_dir)
@@ -373,14 +350,14 @@ class App:
             else:
                 subprocess.run(["xdg-open", str(discogs_dir)])
         except Exception as e:
-            self.log_to_console(f"Klasör açılamadı: {e}")
-            messagebox.showerror("Hata", f"Klasör açılamadı: {e}")
+            self.log_to_console(f"Cannot open folder: {e}")
+            messagebox.showerror("Error", f"Cannot open folder: {e}")
 
     def export_to_csv(self):
-        save_path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV Dosyaları", "*.csv")])
+        save_path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV Files", "*.csv")])
         if save_path:
             self.data_df.to_csv(save_path, index=False)
-            self.log_to_console(f"Veri {save_path} olarak dışa aktarıldı.")
+            self.log_to_console(f"Data exported as {save_path}.")
 
     def mark_downloaded_files(self, data_df):
         downloads_dir = Path.home() / "Downloads"
@@ -403,7 +380,7 @@ class App:
         url = "https://discogs-data-dumps.s3.us-west-2.amazonaws.com/index.html"
         driver = setup_driver(headless=True)
         try:
-            self.log_to_console(f"URL açılıyor: {url}")
+            self.log_to_console(f"Opening URL: {url}")
             driver.get(url)
             WebDriverWait(driver, 20).until(
                 EC.presence_of_all_elements_located((By.TAG_NAME, "a"))
@@ -411,7 +388,7 @@ class App:
             links = driver.find_elements(By.TAG_NAME, "a")
             urls = [link.get_attribute("href") for link in links if link.get_attribute("href") is not None]
             last_url = urls[-1]
-            self.log_to_console(f"Son bağlantıya gidiliyor: {last_url}")
+            self.log_to_console(f"Navigating to the last link: {last_url}")
             driver.get(last_url)
             WebDriverWait(driver, 20).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "div#listing pre"))
@@ -424,27 +401,19 @@ class App:
                 data_df = data_df[data_df["content"] != "checksum"]
                 data_df["content_order"] = data_df["content"].map(content_order)
                 data_df = data_df.sort_values(by=["month", "content_order"], ascending=[False, True])
-                # Sadece gerekli kolonlar + last_modified ve URL dahili kullanım için saklanabilir
-                # Ancak tabloya gösterilmeyecekler
-                # Indirme işlemlerinde kullanmak için last_modified ve URL kalsın, ama görüntüleme yaparken kullanmayacağız.
-                # Son aşamada tabloya aktarmadan önce Downloaded ekliyoruz.
+                # last_modified and URL remain for internal usage
                 data_df = self.mark_downloaded_files(data_df)
-
-                # Görüntülenecek kolonlar: month, content, size, Downloaded
-                # Yine de data_df içinde last_modified, URL vs. kalsın indirme için.
-                # Ama populate_table'a verirken direk bu data_df'yi verebiliriz.
-                # populate_table sadece belirtilen kolonları okuyor.
 
                 self.data_df = data_df
                 self.populate_table(data_df[["month", "content", "size", "Downloaded"]])
                 self.save_to_file()
                 self.log_to_console(
-                    "Scraping tamamlandı. İndirmek istediğiniz veri setini seçiniz ve İndir butonuna tıklayınız.",
+                    "Scraping completed. Please select the dataset you wish to download and click Download.",
                     "INFO")
             else:
-                self.log_to_console("Veri bulunamadı.")
+                self.log_to_console("No data found.")
         except Exception as e:
-            self.log_to_console(f"Hata: {e}", "ERROR")
+            self.log_to_console(f"Error: {e}", "ERROR")
         finally:
             driver.quit()
 
