@@ -1,5 +1,3 @@
-
-
 from datetime import datetime
 from pathlib import Path
 from threading import Thread
@@ -143,7 +141,8 @@ class DiscogsDownloaderUI(ttk.Frame):
             'opened-folder': 'icons8-folder-30.png',
             'logo': 'logo.png',
             'fetch': 'icons8-data-transfer-30.png',
-            'banner': 'banner.png'
+            'banner': 'banner.png',
+            'delete' : 'icons8-trash-30.png'
         }
 
         self.photoimages = []
@@ -165,12 +164,16 @@ class DiscogsDownloaderUI(ttk.Frame):
         btn = ttk.Button(buttonbar, text='Download', image='download', compound=TOP, command=_func)
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
+        _func = self.stop_download
+        btn = ttk.Button(buttonbar, text='Stop', image='stop-light', compound=TOP, command=_func)
+        btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
+        
         _func = self.refresh_data
         btn = ttk.Button(buttonbar, text='Refresh', image='refresh', compound=TOP, command=_func)
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
-        _func = self.stop_download
-        btn = ttk.Button(buttonbar, text='Stop', image='stop-light', compound=TOP, command=_func)
+        btn = ttk.Button(buttonbar, text='Delete', image='delete', compound=TOP,
+                         command=self.delete_selected)
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
         _func = lambda: Messagebox.ok(message='Open Settings')
@@ -274,8 +277,8 @@ class DiscogsDownloaderUI(ttk.Frame):
         # Treeview başlık stilini ayarlayın
         self.style.configure(
             "Treeview.Heading",
-            padding=(0, 9),  # Başlık yüksekliğini artırmak için padding'i ayarlayın
-            font=("Arial", 12)  # Gerekirse font boyutunu ayarlayın
+            padding=(0, 11),  # Başlık yüksekliğini artırmak için padding'i ayarlayın
+            font=("Arial", 13)  # Gerekirse font boyutunu ayarlayın
         )
         # İki satırlık bir düzen ile treeview ve log'u eşit boyda yapmak için grid kullandık.
         right_panel.columnconfigure(0, weight=1)
@@ -445,9 +448,63 @@ class DiscogsDownloaderUI(ttk.Frame):
                 # Item is not visible, hide the checkbutton
                 cb.place_forget()
 
-    from datetime import datetime
+    def delete_selected(self):
+        """Delete the selected file(s) from the local disk and update the table."""
+        # Get selected items
+        checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
+        if not checked_items:
+            messagebox.showwarning("Warning", "No file selected!")
+            return
 
-    from datetime import datetime
+        # Ask for confirmation before deleting
+        confirm = messagebox.askyesno("Confirm Deletion", "Are you sure you want to delete the selected file(s)?")
+        if not confirm:
+            return  # Exit if the user cancels
+
+        deleted_files = []
+        failed_files = []
+
+        # Iterate over selected items and delete files
+        for item in checked_items:
+            values = self.tree.item(item, "values")
+            month_val = values[1]
+            content_val = values[2]
+            size_val = values[3]
+            downloaded_val = values[4]
+
+            # Find the corresponding row in the DataFrame
+            row_data = self.data_df[
+                (self.data_df["month"] == month_val) &
+                (self.data_df["content"] == content_val) &
+                (self.data_df["size"] == size_val) &
+                (self.data_df["Downloaded"] == downloaded_val)
+                ]
+            if not row_data.empty:
+                url = row_data["URL"].values[0]
+                folder_name = row_data["month"].values[0]
+                filename = os.path.basename(url)
+                file_path = Path.home() / "Downloads" / "Discogs" / "Datasets" / folder_name / filename
+
+                # Attempt to delete the file
+                try:
+                    if file_path.exists():
+                        file_path.unlink()  # Delete the file
+                        deleted_files.append(file_path)
+                        self.data_df.loc[self.data_df["URL"] == url, "Downloaded"] = "✖"
+                    else:
+                        failed_files.append(file_path)
+                except Exception as e:
+                    self.log_to_console(f"Error deleting {file_path}: {e}", "ERROR")
+                    failed_files.append(file_path)
+
+        # Update the UI and log the results
+        if deleted_files:
+            self.log_to_console(f"Deleted files: {', '.join(map(str, deleted_files))}", "INFO")
+        if failed_files:
+            self.log_to_console(f"Failed to delete files: {', '.join(map(str, failed_files))}", "WARNING")
+
+        # Refresh the table
+        self.populate_table(self.data_df)
 
     def log_to_console(self, message, message_type="INFO"):
         # Enable the text widget to insert new text
