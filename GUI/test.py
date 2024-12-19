@@ -197,20 +197,7 @@ class DiscogsDownloaderUI(ttk.Frame):
         lbl = ttk.Label(ds_frm, textvariable='downloadfolder')
         lbl.grid(row=1, column=0, sticky=W, padx=0, pady=2)
         downloads_dir = Path.home() / "Downloads" / "Discogs"
-        self.setvar('downloadfolder', str(downloads_dir))
-
-        lbl = ttk.Label(ds_frm, text='Last Data Fetch:')
-        lbl.grid(row=2, column=0, sticky=W, pady=2)
-        lbl = ttk.Label(ds_frm, textvariable='lastupdate')
-        lbl.grid(row=3, column=0, sticky=EW, padx=0, pady=2)
-        self.setvar('lastupdate', 'Not yet fetched')
-
-        lbl = ttk.Label(ds_frm, text='Downloaded %:')
-        lbl.grid(row=4, column=0, sticky=W, pady=2)
-        lbl = ttk.Label(ds_frm, textvariable='downloadedpercent')
-        lbl.grid(row=4, column=1, sticky=EW, padx=5, pady=2)
-        self.setvar('downloadedpercent', '0%')
-
+        self.setvar('downloadfolder', f" → {str(downloads_dir)}")
         sep = ttk.Separator(ds_frm, bootstyle=SECONDARY)
         sep.grid(row=6, column=0, columnspan=2, pady=10, sticky=EW)
 
@@ -403,14 +390,9 @@ class DiscogsDownloaderUI(ttk.Frame):
         # Reposition Checkbuttons for visible rows
         self.position_checkbuttons()
 
-        # Update summary information
-        total = len(data_df)
-        downloaded = (data_df["Downloaded"] == "✔").sum()
-        perc = 0 if total == 0 else int((downloaded / total) * 100)
-        self.setvar('downloadedpercent', f'{perc}%')
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.setvar('lastupdate', now)
+        self.setvar('lastupdate', f"→ {now}")
 
     def position_checkbuttons(self):
         self.update_idletasks()
