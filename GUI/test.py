@@ -167,7 +167,7 @@ class DiscogsDownloaderUI(ttk.Frame):
         _func = self.stop_download
         btn = ttk.Button(buttonbar, text='Stop', image='stop-light', compound=TOP, command=_func)
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
-        
+
         _func = self.refresh_data
         btn = ttk.Button(buttonbar, text='Refresh', image='refresh', compound=TOP, command=_func)
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
@@ -198,6 +198,14 @@ class DiscogsDownloaderUI(ttk.Frame):
         lbl.grid(row=1, column=0, sticky=W, padx=0, pady=2)
         downloads_dir = Path.home() / "Downloads" / "Discogs"
         self.setvar('downloadfolder', f" → {str(downloads_dir)}")
+
+        lbl = ttk.Label(ds_frm, text='Size of Downloaded Files:')
+        lbl.grid(row=2, column=0, sticky=W, pady=2)
+
+        self.downloaded_size_var = ttk.StringVar(value="Calculating...")
+        lbl = ttk.Label(ds_frm, textvariable=self.downloaded_size_var)
+        lbl.grid(row=3, column=0, sticky=W, padx=0, pady=2)
+
         sep = ttk.Separator(ds_frm, bootstyle=SECONDARY)
         sep.grid(row=6, column=0, columnspan=2, pady=10, sticky=EW)
 
@@ -258,16 +266,13 @@ class DiscogsDownloaderUI(ttk.Frame):
 
         right_panel = ttk.Frame(self, padding=(2, 0))
         right_panel.pack(side=RIGHT, fill=BOTH, expand=NO)
-        # Stil nesnesini oluşturun
-        self.style = ttk.Style()
 
-        # Treeview başlık stilini ayarlayın
+        self.style = ttk.Style()
         self.style.configure(
             "Treeview.Heading",
-            padding=(0, 11),  # Başlık yüksekliğini artırmak için padding'i ayarlayın
-            font=("Arial", 13)  # Gerekirse font boyutunu ayarlayın
+            padding=(0, 11),
+            font=("Arial", 13)
         )
-        # İki satırlık bir düzen ile treeview ve log'u eşit boyda yapmak için grid kullandık.
         right_panel.columnconfigure(0, weight=1)
         right_panel.rowconfigure(0, weight=1)
         right_panel.rowconfigure(1, weight=1)
@@ -280,40 +285,30 @@ class DiscogsDownloaderUI(ttk.Frame):
         tv.column("size", width=25, anchor=CENTER)
         tv.column("Downloaded", width=35, anchor=CENTER)
 
-        # Create vertical scrollbar
         vsb = ttk.Scrollbar(right_panel, orient="vertical", command=tv.yview)
         tv.configure(yscrollcommand=vsb.set)
-
-        # Place Treeview and scrollbar in the grid
         tv.grid(row=0, column=0, sticky='nsew', pady=1)
         vsb.grid(row=0, column=1, sticky='ns')
+
         buttonbar2 = ttk.Frame(self, style='primary.TFrame')
         buttonbar2.pack(fill=X, pady=1, side=BOTTOM)
-        # Define a custom set method for the scrollbar
+
         def _scrollbar_set(first, last):
             vsb.set(first, last)
             self.position_checkbuttons()
 
-        # Configure the treeview to use the custom set method
         tv.configure(yscrollcommand=_scrollbar_set)
 
         for col in tv["columns"]:
             tv.heading(col, text=col.capitalize(), anchor=CENTER)
 
-        # Treeview grid yerleşimi
-        tv.grid(row=0, column=0, sticky='nsew', pady=1)
-        self.tree = tv
-
-        # scrolling text output (log)
         scroll_cf = CollapsingFrame(right_panel)
         scroll_cf.grid(row=1, column=0, columnspan=2, sticky='nsew')
-
 
         output_container = ttk.Frame(scroll_cf, padding=0)
         _value = 'Log: Ready.'
         self.setvar('scroll-message', _value)
 
-        # Create a frame to hold the Text widget and scrollbar
         console_frame = ttk.Frame(output_container)
         console_frame.pack(fill=BOTH, expand=NO)
         console_frame.columnconfigure(0, weight=1)
@@ -323,17 +318,14 @@ class DiscogsDownloaderUI(ttk.Frame):
         st.grid(row=0, column=0, sticky='nsew')
         self.console_text = st
 
-        # Create the vertical scrollbar
         console_vsb = ttk.Scrollbar(console_frame, orient='vertical', command=st.yview)
         console_vsb.grid(row=0, column=1, sticky='ns')
-
-        # Configure the Text widget to use the scrollbar
         st.configure(yscrollcommand=console_vsb.set)
 
-        # Add the output_container to the collapsible frame
         scroll_cf.add(output_container, textvariable='scroll-message')
 
-        # Bind the scroll events to update the Checkbutton positions
+        self.tree = tv
+
         self.tree.bind("<Configure>", lambda e: self.position_checkbuttons())
         self.tree.bind("<Motion>", lambda e: self.position_checkbuttons())
         self.tree.bind("<ButtonRelease-1>", lambda e: self.position_checkbuttons())
@@ -344,6 +336,8 @@ class DiscogsDownloaderUI(ttk.Frame):
         self.log_to_console("The application is fetching data automatically, please wait...", "INFO")
         self.after(100, self.start_scraping)
 
+        self.update_downloaded_size()
+
     def refresh_data(self):
         if self.data_df.empty:
             self.log_to_console("No data to refresh. Fetch data first.", "WARNING")
@@ -352,17 +346,14 @@ class DiscogsDownloaderUI(ttk.Frame):
             self.log_to_console("Data refreshed.", "INFO")
 
     def populate_table(self, data_df):
-        # Destroy all existing Checkbuttons
         for cb in self.checkbuttons.values():
             cb.destroy()
         self.check_vars.clear()
         self.checkbuttons.clear()
 
-        # Clear existing rows in the Treeview
         for row in self.tree.get_children():
             self.tree.delete(row)
 
-        # Prepare color map for alternating row colors
         unique_months = data_df["month"].unique()
         color_map = {}
         for i, month in enumerate(unique_months):
@@ -371,43 +362,34 @@ class DiscogsDownloaderUI(ttk.Frame):
         self.tree.tag_configure("month1", background="#343a40", foreground="#f8f9fa")
         self.tree.tag_configure("month2", background="#495057", foreground="#f8f9fa")
 
-        # Add rows to the Treeview and create Checkbuttons
         for i, (_, row) in enumerate(data_df.iterrows()):
-            # Insert row into Treeview
             tag = color_map.get(row["month"], "month1")
             values = ["", row["month"], row["content"], row["size"], row["Downloaded"]]
             item_id = self.tree.insert("", "end", values=values, tags=(tag,))
-
-            # Create Checkbutton only if the row was successfully added
             if item_id:
                 var = ttk.IntVar(value=0)
                 cb = ttk.Checkbutton(self.tree, variable=var)
                 self.check_vars[item_id] = var
                 self.checkbuttons[item_id] = cb
-            else:
-                print(f"Skipped creating Checkbutton for row {i} due to invalid item_id")
 
-        # Reposition Checkbuttons for visible rows
         self.position_checkbuttons()
-
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.setvar('lastupdate', f"→ {now}")
 
+        self.update_downloaded_size()
+
     def position_checkbuttons(self):
         self.update_idletasks()
-
         if not self.checkbuttons:
             return
 
-        # Get the visible rows in the treeview
         first_visible = self.tree.winfo_rooty()
         last_visible = first_visible + self.tree.winfo_height()
 
         for item_id, cb in list(self.checkbuttons.items()):
             bbox = self.tree.bbox(item_id, column=0)
             if not bbox:
-                # If no bounding box, hide the checkbutton
                 cb.place_forget()
                 continue
 
@@ -415,38 +397,30 @@ class DiscogsDownloaderUI(ttk.Frame):
             cb_width = cb.winfo_reqwidth()
             cb_height = cb.winfo_reqheight()
 
-            # Calculate checkbox position
             cb_x = x + (width - cb_width) // 2
             cb_y = y + (height - cb_height) // 2
 
-            # Check if the item is actually visible in the treeview viewport
             item_top = self.tree.winfo_rooty() + y
             item_bottom = item_top + height
 
             if first_visible <= item_bottom and item_top <= last_visible:
-                # Item is visible, place the checkbutton
                 cb.place(in_=self.tree, x=cb_x, y=cb_y + 1, width=height - 2, height=height - 2)
             else:
-                # Item is not visible, hide the checkbutton
                 cb.place_forget()
 
     def delete_selected(self):
-        """Delete the selected file(s) from the local disk and update the table."""
-        # Get selected items
         checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
         if not checked_items:
             messagebox.showwarning("Warning", "No file selected!")
             return
 
-        # Ask for confirmation before deleting
         confirm = messagebox.askyesno("Confirm Deletion", "Are you sure you want to delete the selected file(s)?")
         if not confirm:
-            return  # Exit if the user cancels
+            return
 
         deleted_files = []
         failed_files = []
 
-        # Iterate over selected items and delete files
         for item in checked_items:
             values = self.tree.item(item, "values")
             month_val = values[1]
@@ -454,23 +428,21 @@ class DiscogsDownloaderUI(ttk.Frame):
             size_val = values[3]
             downloaded_val = values[4]
 
-            # Find the corresponding row in the DataFrame
             row_data = self.data_df[
                 (self.data_df["month"] == month_val) &
                 (self.data_df["content"] == content_val) &
                 (self.data_df["size"] == size_val) &
                 (self.data_df["Downloaded"] == downloaded_val)
-                ]
+            ]
             if not row_data.empty:
                 url = row_data["URL"].values[0]
                 folder_name = row_data["month"].values[0]
                 filename = os.path.basename(url)
                 file_path = Path.home() / "Downloads" / "Discogs" / "Datasets" / folder_name / filename
 
-                # Attempt to delete the file
                 try:
                     if file_path.exists():
-                        file_path.unlink()  # Delete the file
+                        file_path.unlink()
                         deleted_files.append(file_path)
                         self.data_df.loc[self.data_df["URL"] == url, "Downloaded"] = "✖"
                     else:
@@ -479,41 +451,26 @@ class DiscogsDownloaderUI(ttk.Frame):
                     self.log_to_console(f"Error deleting {file_path}: {e}", "ERROR")
                     failed_files.append(file_path)
 
-        # Update the UI and log the results
         if deleted_files:
             self.log_to_console(f"Deleted files: {', '.join(map(str, deleted_files))}", "INFO")
         if failed_files:
             self.log_to_console(f"Failed to delete files: {', '.join(map(str, failed_files))}", "WARNING")
 
-        # Refresh the table
         self.populate_table(self.data_df)
+        self.update_downloaded_size()
 
     def log_to_console(self, message, message_type="INFO"):
-        # Enable the text widget to insert new text
         self.console_text.config(state='normal')
-
-        # Format the message with timestamp and message type
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         formatted_message = f"→ [{timestamp}] [{message_type.upper()}]: {message}\n"
-
-        # Insert the formatted message into the console text widget
         self.console_text.insert('end', formatted_message)
-
-        # Disable the text widget to prevent editing
         self.console_text.config(state='disabled')
-
-        # Scroll to the end of the text widget
         self.console_text.see('end')
 
-        # Update the header with just the message content
         message_content = message.strip()
-
-        # Truncate if necessary
         max_header_length = 80
         if len(message_content) > max_header_length:
             message_content = message_content[:max_header_length] + '...'
-
-        # Update the 'scroll-message' variable
         self.setvar('scroll-message', f"Log: {message_content}")
 
     def mark_downloaded_files(self, data_df):
@@ -550,12 +507,12 @@ class DiscogsDownloaderUI(ttk.Frame):
 
             with open(file_path, "wb") as file:
                 for data in response.iter_content(block_size):
-                    if self.stop_flag:  # Check if stop button is pressed
+                    if self.stop_flag:
                         self.setvar('prog-message', 'Idle...')
                         self.log_to_console("Download Stopped", "WARNING")
-                        file.close()  # Close the file before deletion
+                        file.close()
                         if file_path.exists():
-                            os.remove(file_path)  # Delete incomplete file
+                            os.remove(file_path)
                             self.log_to_console(f"Incomplete file {file_path} deleted.", "WARNING")
                         return
                     file.write(data)
@@ -567,7 +524,6 @@ class DiscogsDownloaderUI(ttk.Frame):
                         speed = (downloaded_size / elapsed) / (1024 * 1024)
                     else:
                         speed = 0.0
-                        # Elapsed zamanı dönüştür
                     elapsed_minutes = int(elapsed) // 60
                     elapsed_seconds = int(elapsed) % 60
                     self.setvar('prog-speed', f'Speed: {speed:.2f} MB/s')
@@ -575,9 +531,7 @@ class DiscogsDownloaderUI(ttk.Frame):
 
                     if total_size > 0 and downloaded_size > 0:
                         percentage = (downloaded_size / total_size) * 100
-                        left = int(
-                            (total_size - downloaded_size) / (downloaded_size / elapsed)) if downloaded_size > 0 else 0
-                        # Left zamanı dönüştür
+                        left = int((total_size - downloaded_size) / (downloaded_size / elapsed)) if downloaded_size > 0 else 0
                         left_minutes = left // 60
                         left_seconds = left % 60
                         self.setvar('prog-time-left', f'Left: {left_minutes} min {left_seconds} sec')
@@ -589,11 +543,12 @@ class DiscogsDownloaderUI(ttk.Frame):
 
             self.data_df.loc[self.data_df["URL"] == url, "Downloaded"] = "✔"
             self.populate_table(self.data_df)
+            self.update_downloaded_size()
 
         except Exception as e:
             self.log_to_console(f"Error: {e}", "ERROR")
             if file_path.exists():
-                os.remove(file_path)  # Ensure incomplete files are deleted
+                os.remove(file_path)
                 self.log_to_console(f"Incomplete file {file_path} deleted.", "WARNING")
 
     def start_download(self, url, filename, last_modified):
@@ -602,7 +557,6 @@ class DiscogsDownloaderUI(ttk.Frame):
         Thread(target=self.download_file, args=(url, filename, folder_name), daemon=True).start()
 
     def stop_download(self):
-        """Stop the ongoing download and delete incomplete files."""
         self.stop_flag = True
         self.log_to_console("Stopping the download and cleaning up...", "WARNING")
 
@@ -631,6 +585,21 @@ class DiscogsDownloaderUI(ttk.Frame):
                 last_modified = pd.to_datetime(last_modified)
                 filename = os.path.basename(url)
                 self.start_download(url, filename, last_modified)
+
+    def get_folder_size(self, folder_path):
+        total_size = 0
+        for root, dirs, files in os.walk(folder_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                if os.path.exists(file_path):
+                    total_size += os.path.getsize(file_path)
+        return total_size
+
+    def update_downloaded_size(self):
+        downloads_dir = Path.home() / "Downloads" / "Discogs"
+        size_in_bytes = self.get_folder_size(downloads_dir)
+        size_in_mb = size_in_bytes / (1024 * 1024)
+        self.downloaded_size_var.set(f"→ {size_in_mb:.2f} MB")
 
     def open_discogs_folder(self):
         downloads_dir = Path.home() / "Downloads" / "Discogs"
@@ -705,28 +674,23 @@ class DiscogsDownloaderUI(ttk.Frame):
 def main():
     empty_df = pd.DataFrame(columns=["month", "content", "size", "last_modified", "key", "URL", "Downloaded"])
     app = ttk.Window("Discogs Data Downloader", themename="darkly")
-    # Customize the Treeview header style
     primary_color = app.style.colors.primary
     style = ttk.Style()
-    style.configure("Treeview.Heading", background=primary_color,foreground="white", font=("Helvetica", 10, "bold"))
+    style.configure("Treeview.Heading", background=primary_color, foreground="white", font=("Helvetica", 10, "bold"))
 
     DiscogsDownloaderUI(app, empty_df)
-    # Ekran boyutunu ve konumunu ayarla
     window_width = 600
     window_height = 800
 
-    # Ekran çözünürlüğünü al
     screen_width = app.winfo_screenwidth()
     screen_height = app.winfo_screenheight()
 
-    # Pencereyi ekranın ortasına konumlandır
     center_x = int((screen_width - window_width) / 2)
     center_y = int((screen_height - window_height) / 2)
 
-    # Pencere geometrisini ayarla
     app.geometry(f'{window_width}x{window_height}+{center_x}+{center_y}')
-    app.resizable(False,True)
-
+    # Prevent window from being resized or maximized
+    app.resizable(False, False)
 
     app.mainloop()
 
