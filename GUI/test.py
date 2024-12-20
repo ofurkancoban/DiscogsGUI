@@ -1,11 +1,13 @@
 from datetime import datetime
 from pathlib import Path
-from threading import Thread
+from threading import Thread, Lock
 import requests
 import os
+import gzip
 import pandas as pd
 import platform
 import subprocess
+import time
 
 import ttkbootstrap as ttk
 from ttkbootstrap import Style
@@ -129,7 +131,7 @@ class DiscogsDownloaderUI(ttk.Frame):
         self.check_vars = {}
         self.checkbuttons = {}
         # Load an image for the banner
-        self.banner_image = ttk.PhotoImage(file="assets/logo.png")  # Replace with your image file
+        self.banner_image = ttk.PhotoImage(file="assets/logo.png")
         banner = ttk.Label(self, image=self.banner_image)
         banner.pack(side="top", fill="x")
         image_files = {
@@ -142,7 +144,8 @@ class DiscogsDownloaderUI(ttk.Frame):
             'logo': 'logo.png',
             'fetch': 'icons8-data-transfer-30.png',
             'banner': 'banner.png',
-            'delete' : 'icons8-trash-30.png'
+            'delete' : 'icons8-trash-30.png',
+            'extract' : 'icons8-trash-30.png'
         }
 
         self.photoimages = []
@@ -174,6 +177,10 @@ class DiscogsDownloaderUI(ttk.Frame):
 
         btn = ttk.Button(buttonbar, text='Delete', image='delete', compound=TOP,
                          command=self.delete_selected)
+        btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
+
+        btn = ttk.Button(buttonbar, text='Extract', image='extract', compound=TOP,
+                         command=self.extract_selected)
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
         _func = lambda: Messagebox.ok(message='Open Settings')
@@ -487,74 +494,222 @@ class DiscogsDownloaderUI(ttk.Frame):
         data_df["Downloaded"] = downloaded_status
         return data_df
 
+    def start_download(self, url, filename, last_modified):
+        self.stop_flag = False
+        folder_name = last_modified.strftime("%Y-%m")
+        Thread(target=self.download_file, args=(url, filename, folder_name), daemon=True).start()
+
+    def parallel_download(self, url, filename, folder_name, total_size):
+        """Download file in parallel segments."""
+        downloads_dir = Path.home() / "Downloads" / "Discogs" / "Datasets"
+        target_dir = downloads_dir / folder_name
+        target_dir.mkdir(parents=True, exist_ok=True)
+        file_path = target_dir / filename
+
+        num_threads = 4
+        part_size = total_size // num_threads
+
+        partial_paths = []
+        thread_progress = [0] * num_threads
+        lock = Lock()
+
+        def download_segment(idx, start, end):
+            headers = {"Range": f"bytes={start}-{end}"}
+            r = requests.get(url, headers=headers, stream=True)
+            part_file = file_path.with_name(file_path.name + f".part{idx}")
+            partial_paths.append(part_file)
+            with open(part_file, "wb") as f:
+                for chunk in r.iter_content(1024*64):
+                    if self.stop_flag:
+                        return
+                    if chunk:
+                        f.write(chunk)
+                        with lock:
+                            thread_progress[idx] += len(chunk)
+
+        # Start time for speed calculation
+        start_time = datetime.now()
+        self.setvar('prog-time-started', f'Started at: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
+        threads = []
+        for i in range(num_threads):
+            start = i * part_size
+            end = (i+1)*part_size - 1 if i < num_threads-1 else total_size - 1
+            t = Thread(target=download_segment, args=(i, start, end), daemon=True)
+            threads.append(t)
+            t.start()
+
+        # Monitor progress
+        last_downloaded = 0
+        while any(t.is_alive() for t in threads):
+            if self.stop_flag:
+                # Wait for threads to exit
+                for t in threads:
+                    t.join()
+                # Cleanup partial files
+                for p in partial_paths:
+                    if p.exists():
+                        p.unlink()
+                return False
+            time.sleep(0.5)
+            downloaded_size = sum(thread_progress)
+            elapsed = (datetime.now() - start_time).total_seconds()
+
+            if elapsed > 0:
+                speed = (downloaded_size / elapsed) / (1024*1024)
+            else:
+                speed = 0.0
+
+            self.setvar('prog-speed', f'Speed: {speed:.2f} MB/s')
+            total_percentage = (downloaded_size / total_size) * 100 if total_size > 0 else 0
+            self.setvar('prog-message', f'Downloading {filename}: {total_percentage:.2f}%')
+            self.pb["maximum"] = total_size
+            self.pb["value"] = downloaded_size
+
+            elapsed_minutes = int(elapsed) // 60
+            elapsed_seconds = int(elapsed) % 60
+            self.setvar('prog-time-elapsed', f'Elapsed: {elapsed_minutes} min {elapsed_seconds} sec')
+
+            if downloaded_size > 0:
+                # Estimate time left
+                rate = downloaded_size / elapsed if elapsed > 0 else 0
+                left = int((total_size - downloaded_size) / rate) if rate > 0 else 0
+                left_minutes = left // 60
+                left_seconds = left % 60
+                self.setvar('prog-time-left', f'Left: {left_minutes} min {left_seconds} sec')
+
+        # Join threads to ensure completion
+        for t in threads:
+            t.join()
+
+        # Check if stopped
+        if self.stop_flag:
+            for p in partial_paths:
+                if p.exists():
+                    p.unlink()
+            return False
+
+        # Combine parts
+        with open(file_path, "wb") as f_out:
+            for i in range(num_threads):
+                part_file = file_path.with_name(file_path.name + f".part{i}")
+                if part_file.exists():
+                    with open(part_file, "rb") as f_in:
+                        f_out.write(f_in.read())
+                    part_file.unlink()
+
+        return True
+
     def download_file(self, url, filename, folder_name):
         try:
-            self.setvar('prog-message', 'Downloading...')
+            self.setvar('prog-message', 'Preparing download...')
+            # Check server support for partial content
+            head = requests.head(url)
+            if head.status_code != 200:
+                self.log_to_console("Cannot retrieve file size.", "ERROR")
+                return
+            try:
+                total_size = int(head.headers.get('Content-Length', 0))
+            except:
+                total_size = 0
+
+            accept_ranges = head.headers.get('Accept-Ranges', 'none')
             downloads_dir = Path.home() / "Downloads" / "Discogs" / "Datasets"
             target_dir = downloads_dir / folder_name
             target_dir.mkdir(parents=True, exist_ok=True)
             file_path = target_dir / filename
 
-            response = requests.get(url, stream=True)
-            total_size = int(response.headers.get('content-length', 0))
-            block_size = 1024
-            self.pb["value"] = 0
-            self.pb["maximum"] = total_size
-
             start_time = datetime.now()
             self.setvar('prog-time-started', f'Started at: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
-            downloaded_size = 0
 
-            with open(file_path, "wb") as file:
-                for data in response.iter_content(block_size):
+            if total_size > 0 and accept_ranges.lower() == 'bytes':
+                # Attempt parallel download
+                success = self.parallel_download(url, filename, folder_name, total_size)
+                if not success:
                     if self.stop_flag:
-                        self.setvar('prog-message', 'Idle...')
                         self.log_to_console("Download Stopped", "WARNING")
-                        file.close()
                         if file_path.exists():
-                            os.remove(file_path)
+                            file_path.unlink()
                             self.log_to_console(f"Incomplete file {file_path} deleted.", "WARNING")
+                        self.setvar('prog-message', 'Idle...')
                         return
-                    file.write(data)
-                    downloaded_size += len(data)
-                    self.pb["value"] = downloaded_size
-                    elapsed = (datetime.now() - start_time).total_seconds()
-
-                    if elapsed > 0:
-                        speed = (downloaded_size / elapsed) / (1024 * 1024)
                     else:
-                        speed = 0.0
-                    elapsed_minutes = int(elapsed) // 60
-                    elapsed_seconds = int(elapsed) % 60
-                    self.setvar('prog-speed', f'Speed: {speed:.2f} MB/s')
-                    self.setvar('prog-time-elapsed', f'Elapsed: {elapsed_minutes} min {elapsed_seconds} sec')
-
-                    if total_size > 0 and downloaded_size > 0:
-                        percentage = (downloaded_size / total_size) * 100
-                        left = int((total_size - downloaded_size) / (downloaded_size / elapsed)) if downloaded_size > 0 else 0
-                        left_minutes = left // 60
-                        left_seconds = left % 60
-                        self.setvar('prog-time-left', f'Left: {left_minutes} min {left_seconds} sec')
-                        self.setvar('prog-message', f'Downloading {filename}: {percentage:.2f}%')
-                        self.setvar('current-file-msg', f'Current file: {file_path}')
-
-            self.setvar('prog-message', 'Idle...')
-            self.log_to_console(f"{filename} successfully downloaded: {file_path}", "INFO")
-
-            self.data_df.loc[self.data_df["URL"] == url, "Downloaded"] = "✔"
-            self.populate_table(self.data_df)
-            self.update_downloaded_size()
+                        # fallback to single-thread if needed (unlikely)
+                        self.log_to_console("Parallel download failed, falling back to single-thread.", "WARNING")
+                        self.single_thread_download(url, filename, folder_name)
+                else:
+                    self.log_to_console(f"{filename} successfully downloaded: {file_path}", "INFO")
+                    self.data_df.loc[self.data_df["URL"] == url, "Downloaded"] = "✔"
+                    self.populate_table(self.data_df)
+                    self.update_downloaded_size()
+                    self.setvar('prog-message', 'Idle...')
+            else:
+                # Fallback to single-threaded download if partial not supported
+                self.single_thread_download(url, filename, folder_name)
 
         except Exception as e:
             self.log_to_console(f"Error: {e}", "ERROR")
-            if file_path.exists():
-                os.remove(file_path)
+            if 'file_path' in locals() and file_path.exists():
+                file_path.unlink()
                 self.log_to_console(f"Incomplete file {file_path} deleted.", "WARNING")
 
-    def start_download(self, url, filename, last_modified):
-        self.stop_flag = False
-        folder_name = last_modified.strftime("%Y-%m")
-        Thread(target=self.download_file, args=(url, filename, folder_name), daemon=True).start()
+    def single_thread_download(self, url, filename, folder_name):
+        """Fallback single-threaded download if parallel not available."""
+        self.log_to_console("Partial downloads not supported. Using single-threaded download.", "INFO")
+        downloads_dir = Path.home() / "Downloads" / "Discogs" / "Datasets"
+        target_dir = downloads_dir / folder_name
+        target_dir.mkdir(parents=True, exist_ok=True)
+        file_path = target_dir / filename
+
+        response = requests.get(url, stream=True)
+        total_size = int(response.headers.get('content-length', 0))
+        block_size = 1024*64
+        self.pb["value"] = 0
+        self.pb["maximum"] = total_size
+
+        start_time = datetime.now()
+        self.setvar('prog-time-started', f'Started at: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
+        downloaded_size = 0
+
+        with open(file_path, "wb") as file:
+            for data in response.iter_content(block_size):
+                if self.stop_flag:
+                    self.setvar('prog-message', 'Idle...')
+                    self.log_to_console("Download Stopped", "WARNING")
+                    file.close()
+                    if file_path.exists():
+                        os.remove(file_path)
+                        self.log_to_console(f"Incomplete file {file_path} deleted.", "WARNING")
+                    return
+                file.write(data)
+                downloaded_size += len(data)
+                self.pb["value"] = downloaded_size
+                elapsed = (datetime.now() - start_time).total_seconds()
+
+                if elapsed > 0:
+                    speed = (downloaded_size / elapsed) / (1024 * 1024)
+                else:
+                    speed = 0.0
+
+                elapsed_minutes = int(elapsed) // 60
+                elapsed_seconds = int(elapsed) % 60
+                self.setvar('prog-speed', f'Speed: {speed:.2f} MB/s')
+                self.setvar('prog-time-elapsed', f'Elapsed: {elapsed_minutes} min {elapsed_seconds} sec')
+
+                if total_size > 0 and downloaded_size > 0:
+                    percentage = (downloaded_size / total_size) * 100
+                    left = int((total_size - downloaded_size) / (downloaded_size / elapsed)) if downloaded_size > 0 else 0
+                    left_minutes = left // 60
+                    left_seconds = left % 60
+                    self.setvar('prog-time-left', f'Left: {left_minutes} min {left_seconds} sec')
+                    self.setvar('prog-message', f'Downloading {filename}: {percentage:.2f}%')
+                    self.setvar('current-file-msg', f'Current file: {file_path}')
+
+        self.setvar('prog-message', 'Idle...')
+        self.log_to_console(f"{filename} successfully downloaded: {file_path}", "INFO")
+
+        self.data_df.loc[self.data_df["URL"] == url, "Downloaded"] = "✔"
+        self.populate_table(self.data_df)
+        self.update_downloaded_size()
 
     def stop_download(self):
         self.stop_flag = True
@@ -669,6 +824,60 @@ class DiscogsDownloaderUI(ttk.Frame):
             self.log_to_console(f"Error: {e}", "ERROR")
         finally:
             driver.quit()
+
+    def extract_selected(self):
+        checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
+        if not checked_items:
+            messagebox.showwarning("Warning", "No file selected!")
+            return
+
+        extracted_files = []
+        failed_files = []
+
+        for item in checked_items:
+            values = self.tree.item(item, "values")
+            month_val = values[1]
+            content_val = values[2]
+            size_val = values[3]
+            downloaded_val = values[4]
+
+            # Confirm file is downloaded
+            if downloaded_val != "✔":
+                self.log_to_console("File not downloaded, cannot extract.", "WARNING")
+                continue
+
+            row_data = self.data_df[
+                (self.data_df["month"] == month_val) &
+                (self.data_df["content"] == content_val) &
+                (self.data_df["size"] == size_val) &
+                (self.data_df["Downloaded"] == downloaded_val)
+            ]
+
+            if not row_data.empty:
+                url = row_data["URL"].values[0]
+                folder_name = row_data["month"].values[0]
+                filename = os.path.basename(url)
+                file_path = Path.home() / "Downloads" / "Discogs" / "Datasets" / folder_name / filename
+
+                # Check if file is a gz file
+                if file_path.suffix.lower() == ".gz":
+                    # Attempt extraction
+                    try:
+                        output_path = file_path.with_suffix('')
+                        with gzip.open(file_path, 'rb') as f_in, open(output_path, 'wb') as f_out:
+                            f_out.write(f_in.read())
+                        extracted_files.append(output_path)
+                        self.log_to_console(f"Extracted: {file_path} → {output_path}", "INFO")
+                    except Exception as e:
+                        failed_files.append(file_path)
+                        self.log_to_console(f"Error extracting {file_path}: {e}", "ERROR")
+                else:
+                    self.log_to_console(f"{file_path} is not a .gz file.", "WARNING")
+
+        if extracted_files:
+            self.log_to_console(f"Extracted files: {', '.join(map(str, extracted_files))}", "INFO")
+        if failed_files:
+            self.log_to_console(f"Failed to extract files: {', '.join(map(str, failed_files))}", "WARNING")
 
 
 def main():
