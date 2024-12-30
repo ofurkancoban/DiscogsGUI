@@ -17,17 +17,28 @@ from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from tkinter import messagebox
 from tkinter.scrolledtext import ScrolledText
+import re
+
+###############################################################################
+#                          File-Type → XML Tag Mapping
+###############################################################################
+TAG_MAP = {
+    "releases": "<release",
+    "artists": "<artist",
+    "masters": "<master",
+    "labels": "<label"
+}
+
 
 ###############################################################################
 #                              XML → DataFrame logic
 ###############################################################################
-
-def xml_to_df(xml_path):
+def xml_to_df(xml_path: Path) -> pd.DataFrame:
     """Convert an XML file to a pandas DataFrame using iterative parsing."""
     data_dict = {}
     current_path = []
 
-    for event, elem in ET.iterparse(xml_path, events=("start", "end")):
+    for event, elem in ET.iterparse(str(xml_path), events=("start", "end")):
         if event == "start":
             current_path.append(elem.tag)
             # handle attributes
@@ -52,25 +63,110 @@ def xml_to_df(xml_path):
             current_path.pop()
             elem.clear()
 
+    # If data_dict is empty, return empty
+    if not data_dict:
+        return pd.DataFrame()
+
     # unify lengths
     max_len = max(len(lst) for lst in data_dict.values())
     for key, value in data_dict.items():
-        data_dict[key] = value + [None] * (max_len - len(value))
+        if len(value) < max_len:
+            data_dict[key] = value + [None] * (max_len - len(value))
+
     df = pd.DataFrame(data_dict)
     return df
+
 
 ###############################################################################
 #                            Helper to convert a single XML file to CSV
 ###############################################################################
-def convert_extracted_file_to_csv(extracted_file_path, output_csv_path):
+def convert_extracted_file_to_csv(extracted_file_path: Path, output_csv_path: Path) -> bool:
     """
     Use xml_to_df logic to convert the extracted XML file into a CSV.
+    Returns True if successful, False otherwise.
     """
     if not extracted_file_path.exists():
         return False
-    df = xml_to_df(extracted_file_path)
-    df.to_csv(output_csv_path, index=False)
-    return True
+    try:
+        df = xml_to_df(extracted_file_path)
+        df.to_csv(output_csv_path, index=False)
+        return True
+    except Exception as e:
+        print(f"[ERROR] convert_extracted_file_to_csv: {e}")
+        return False
+
+
+###############################################################################
+#                   CHUNKING LOGIC (By Content Type via TAG_MAP)
+###############################################################################
+def chunk_xml_by_type(xml_file_path: Path, content_type: str, records_per_file: int = 10000):
+    """
+    Chunk a Discogs XML file by the appropriate tag for its 'content_type'.
+    e.g. 'releases' => chunk by <release ...>
+         'artists'  => chunk by <artist ...>
+         'masters'  => chunk by <master ...>
+         'labels'   => chunk by <label ...>
+    If content_type is unknown, default to <release ...>.
+
+    We detect new records by a regex on the start tag (like <release ...id=).
+    Then we buffer lines until the *next* record starts, writing each record
+    to the currently open chunk file. Each chunk is wrapped in <root>...</root>.
+    """
+    start_time = time.time()
+    record_counter = 0
+    file_counter = 0
+
+    # Decide which tag pattern to look for
+    chunk_base_tag = TAG_MAP.get(content_type, "<release")
+    tag_pattern = re.compile(rf"<\s*{content_type[:-1]}\b.*?id\s*=", re.IGNORECASE) if content_type in TAG_MAP else \
+        re.compile(r"<\s*release\b.*?id\s*=", re.IGNORECASE)
+
+    output_folder = f"chunked_{content_type}"
+    output_folder_path = xml_file_path.parent / output_folder
+    output_folder_path.mkdir(exist_ok=True)
+
+    with xml_file_path.open("r", encoding="utf-8", errors="replace") as data_file:
+        # Prepare first chunk
+        output_file_path = output_folder_path / f"chunk_{file_counter}.xml"
+        output_file = output_file_path.open("w", encoding="utf-8")
+        output_file.write("<root>\n")
+
+        record_lines = []
+        for line in data_file:
+            # If we detect a new record and we already have lines for a record in buffer,
+            # that means the lines in record_lines belong to the *previous* record.
+            if tag_pattern.search(line):
+                if record_lines:
+                    output_file.write(''.join(record_lines))
+                    record_counter += 1
+
+                    # Check if we need a new chunk
+                    if record_counter % records_per_file == 0:
+                        output_file.write("</root>\n")
+                        output_file.close()
+                        file_counter += 1
+                        output_file_path = output_folder_path / f"chunk_{file_counter}.xml"
+                        output_file = output_file_path.open("w", encoding="utf-8")
+                        output_file.write("<root>\n")
+
+                    record_lines = []
+
+            record_lines.append(line)
+
+        # Write any leftover
+        if record_lines:
+            output_file.write(''.join(record_lines))
+            record_counter += 1
+
+        output_file.write("</root>\n")
+        output_file.close()
+        file_counter += 1
+
+    elapsed_time = time.time() - start_time
+    print(f"[INFO] Done chunking {xml_file_path.name}.")
+    print(f"       Created {file_counter} chunk files in '{output_folder}', "
+          f"total {record_counter} records. Elapsed: {elapsed_time / 60:.1f} min.")
+
 
 ###############################################################################
 #                             S3 + UI + Main Logic
@@ -78,17 +174,19 @@ def convert_extracted_file_to_csv(extracted_file_path, output_csv_path):
 
 PATH = Path(__file__).parent / 'assets'
 
+
 def human_readable_size(num_bytes):
     """Convert a file size in bytes to a human-readable string (KB, MB, or GB),
        with 0 digits after the decimal."""
     if num_bytes < 1024:
         return f"{num_bytes} B"
-    elif num_bytes < 1024**2:
+    elif num_bytes < 1024 ** 2:
         return f"{num_bytes // 1024} KB"
-    elif num_bytes < 1024**3:
-        return f"{num_bytes // (1024**2)} MB"
+    elif num_bytes < 1024 ** 3:
+        return f"{num_bytes // (1024 ** 2)} MB"
     else:
-        return f"{num_bytes // (1024**3)} GB"
+        return f"{num_bytes // (1024 ** 3)} GB"
+
 
 def list_directories_from_s3(base_url="https://discogs-data-dumps.s3.us-west-2.amazonaws.com/", prefix="data/"):
     """Retrieve a list of 'directories' (common prefixes) from the S3 XML listing."""
@@ -100,10 +198,11 @@ def list_directories_from_s3(base_url="https://discogs-data-dumps.s3.us-west-2.a
     ns = "{http://s3.amazonaws.com/doc/2006-03-01/}"
     root = ET.fromstring(r.text)
     dirs = []
-    for cp in root.findall(ns+'CommonPrefixes'):
-        p = cp.find(ns+'Prefix').text
+    for cp in root.findall(ns + 'CommonPrefixes'):
+        p = cp.find(ns + 'Prefix').text
         dirs.append(p)
     return dirs
+
 
 def list_files_in_directory(base_url, directory_prefix):
     """List all files (key, size, last_modified) in a particular S3 directory prefix."""
@@ -116,10 +215,10 @@ def list_files_in_directory(base_url, directory_prefix):
     root = ET.fromstring(r.text)
 
     data = []
-    for content in root.findall(ns+'Contents'):
-        key = content.find(ns+'Key').text
-        size_str = content.find(ns+'Size').text
-        last_modified = content.find(ns+'LastModified').text
+    for content in root.findall(ns + 'Contents'):
+        key = content.find(ns + 'Key').text
+        size_str = content.find(ns + 'Size').text
+        last_modified = content.find(ns + 'LastModified').text
 
         try:
             size_bytes = int(size_str)
@@ -150,15 +249,17 @@ def list_files_in_directory(base_url, directory_prefix):
 
     return pd.DataFrame(data)
 
+
 class CollapsingFrame(ttk.Frame):
     """A collapsible Frame widget for grouping content."""
+
     def __init__(self, master, **kwargs):
         super().__init__(master, **kwargs)
         self.columnconfigure(0, weight=1)
         self.cumulative_rows = 0
         self.images = [
-            ttk.PhotoImage(file=PATH/'icons8-double-up-30.png'),
-            ttk.PhotoImage(file=PATH/'icons8-double-right-30.png')
+            ttk.PhotoImage(file=PATH / 'icons8-double-up-30.png'),
+            ttk.PhotoImage(file=PATH / 'icons8-double-right-30.png')
         ]
 
     def add(self, child, title="", bootstyle=PRIMARY, **kwargs):
@@ -170,7 +271,10 @@ class CollapsingFrame(ttk.Frame):
         if kwargs.get('textvariable'):
             header.configure(textvariable=kwargs.get('textvariable'))
         header.pack(side=LEFT, fill=BOTH, padx=10)
-        def _func(c=child): return self._toggle_open_close(c)
+
+        def _func(c=child):
+            return self._toggle_open_close(c)
+
         btn = ttk.Button(master=frm, image=self.images[0], bootstyle=bootstyle, command=_func)
         btn.pack(side=RIGHT)
         child.btn = btn
@@ -184,6 +288,7 @@ class CollapsingFrame(ttk.Frame):
         else:
             child.grid()
             child.btn.configure(image=self.images[0])
+
 
 class DiscogsDownloaderUI(ttk.Frame):
     def __init__(self, master, data_df, **kwargs):
@@ -212,8 +317,8 @@ class DiscogsDownloaderUI(ttk.Frame):
             'logo': 'logo.png',
             'fetch': 'icons8-data-transfer-30.png',
             'banner': 'banner.png',
-            'delete' : 'icons8-trash-30.png',
-            'extract' : 'icons8-open-archive-30.png',
+            'delete': 'icons8-trash-30.png',
+            'extract': 'icons8-open-archive-30.png',
             'convert': 'icons8-export-csv-30.png'
         }
         self.photoimages = []
@@ -252,7 +357,7 @@ class DiscogsDownloaderUI(ttk.Frame):
                          command=self.extract_selected)
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
-        # NEW "CONVERT" BUTTON
+        # UPDATED "CONVERT" BUTTON
         btn = ttk.Button(buttonbar, text='Convert', image='convert', compound=TOP,
                          command=self.convert_selected)
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
@@ -362,7 +467,7 @@ class DiscogsDownloaderUI(ttk.Frame):
 
         tv = ttk.Treeview(right_panel, show='headings', height=16, style="Treeview")
         tv.configure(columns=(" ", "month", "content", "size", "Downloaded", "Extracted", "Processed"))
-        tv.column(" ", width=1,anchor=CENTER)
+        tv.column(" ", width=1, anchor=CENTER)
         tv.column("month", width=15, anchor=CENTER)
         tv.column("content", width=20, anchor=CENTER)
         tv.column("size", width=25, anchor=CENTER)
@@ -545,7 +650,7 @@ class DiscogsDownloaderUI(ttk.Frame):
                 (self.data_df["Downloaded"] == downloaded_val) &
                 (self.data_df["Extracted"] == extracted_val) &
                 (self.data_df["Processed"] == processed_val)
-            ]
+                ]
             if not row_data.empty:
                 url = row_data["URL"].values[0]
                 folder_name = row_data["month"].values[0]
@@ -605,7 +710,8 @@ class DiscogsDownloaderUI(ttk.Frame):
         self.setvar('scroll-message', f"Log: {message_content}")
 
     def mark_downloaded_files(self, data_df):
-        """Ensure columns "Downloaded", "Extracted", "Processed" exist, defaulting to ✖"""
+        """Ensure columns 'Downloaded', 'Extracted', 'Processed' exist, defaulting to ✖,
+           and check on disk if each file is present."""
         for col in ["Downloaded", "Extracted", "Processed"]:
             if col not in data_df.columns:
                 data_df[col] = "✖"
@@ -615,12 +721,36 @@ class DiscogsDownloaderUI(ttk.Frame):
             folder_name = str(row["month"])
             filename = os.path.basename(row["URL"])
             file_path = downloads_dir / folder_name / filename
+
+            downloaded_status = "✖"
+            extracted_status = "✖"
+            processed_status = "✖"
+
+            # Check if the compressed file is present
             if file_path.exists():
-                data_df.at[idx, "Downloaded"] = "✔"
-            else:
-                data_df.at[idx, "Downloaded"] = "✖"
-                data_df.at[idx, "Extracted"] = "✖"
-                data_df.at[idx, "Processed"] = "✖"
+                downloaded_status = "✔"
+
+                # If it's .gz, check for extracted .xml
+                if file_path.suffix.lower() == ".gz":
+                    extracted_file = file_path.with_suffix('')  # .gz -> .xml
+                    if extracted_file.exists() and extracted_file.suffix.lower() == ".xml":
+                        extracted_status = "✔"
+                        # If .csv also exists, mark processed
+                        csv_file = extracted_file.with_suffix('.csv')
+                        if csv_file.exists():
+                            processed_status = "✔"
+                else:
+                    # If it's not gz but maybe raw .xml
+                    if file_path.suffix.lower() == ".xml":
+                        extracted_status = "✔"
+                        # check .csv
+                        csv_file = file_path.with_suffix('.csv')
+                        if csv_file.exists():
+                            processed_status = "✔"
+
+            data_df.at[idx, "Downloaded"] = downloaded_status
+            data_df.at[idx, "Extracted"] = extracted_status
+            data_df.at[idx, "Processed"] = processed_status
         return data_df
 
     def start_download(self, url, filename, last_modified):
@@ -647,7 +777,7 @@ class DiscogsDownloaderUI(ttk.Frame):
             part_file = file_path.with_name(file_path.name + f".part{idx}")
             partial_paths.append(part_file)
             with open(part_file, "wb") as f:
-                for chunk in r.iter_content(1024*64):
+                for chunk in r.iter_content(1024 * 64):
                     if self.stop_flag:
                         return
                     if chunk:
@@ -660,7 +790,7 @@ class DiscogsDownloaderUI(ttk.Frame):
         threads = []
         for i in range(num_threads):
             start = i * part_size
-            end = (i+1)*part_size - 1 if i < num_threads-1 else total_size - 1
+            end = (i + 1) * part_size - 1 if i < num_threads - 1 else total_size - 1
             t = Thread(target=download_segment, args=(i, start, end), daemon=True)
             threads.append(t)
             t.start()
@@ -676,7 +806,7 @@ class DiscogsDownloaderUI(ttk.Frame):
             time.sleep(0.5)
             downloaded_size = sum(thread_progress)
             elapsed = (datetime.now() - start_time).total_seconds()
-            speed = (downloaded_size / elapsed) / (1024*1024) if elapsed > 0 else 0.0
+            speed = (downloaded_size / elapsed) / (1024 * 1024) if elapsed > 0 else 0.0
             self.setvar('prog-speed', f'Speed: {speed:.2f} MB/s')
             total_percentage = (downloaded_size / total_size) * 100 if total_size > 0 else 0
             self.setvar('prog-message', f'Downloading {filename}: {total_percentage:.2f}%')
@@ -762,7 +892,7 @@ class DiscogsDownloaderUI(ttk.Frame):
 
         response = requests.get(url, stream=True)
         total_size = int(response.headers.get('content-length', 0))
-        block_size = 1024*64
+        block_size = 1024 * 64
         self.pb["value"] = 0
         self.pb["maximum"] = total_size
 
@@ -786,14 +916,13 @@ class DiscogsDownloaderUI(ttk.Frame):
                 elapsed = (datetime.now() - start_time).total_seconds()
 
                 speed = (downloaded_size / elapsed) / (1024 * 1024) if elapsed > 0 else 0.0
-                elapsed_minutes = int(elapsed) // 60
-                elapsed_seconds = int(elapsed) % 60
                 self.setvar('prog-speed', f'Speed: {speed:.2f} MB/s')
-                self.setvar('prog-time-elapsed', f'Elapsed: {elapsed_minutes} min {elapsed_seconds} sec')
+                self.setvar('prog-time-elapsed', f'Elapsed: {int(elapsed) // 60} min {int(elapsed) % 60} sec')
 
                 if total_size > 0 and downloaded_size > 0:
                     percentage = (downloaded_size / total_size) * 100
-                    left = int((total_size - downloaded_size) / (downloaded_size / elapsed)) if downloaded_size > 0 else 0
+                    left = int(
+                        (total_size - downloaded_size) / (downloaded_size / elapsed)) if downloaded_size > 0 else 0
                     left_minutes = left // 60
                     left_seconds = left % 60
                     self.setvar('prog-time-left', f'Left: {left_minutes} min {left_seconds} sec')
@@ -834,7 +963,7 @@ class DiscogsDownloaderUI(ttk.Frame):
                 (self.data_df["Downloaded"] == downloaded_val) &
                 (self.data_df["Extracted"] == extracted_val) &
                 (self.data_df["Processed"] == processed_val)
-            ]
+                ]
             if not row_data.empty:
                 url = row_data["URL"].values[0]
                 last_modified = row_data["last_modified"].values[0]
@@ -923,7 +1052,7 @@ class DiscogsDownloaderUI(ttk.Frame):
                 (self.data_df["Downloaded"] == downloaded_val) &
                 (self.data_df["Extracted"] == extracted_val) &
                 (self.data_df["Processed"] == processed_val)
-            ]
+                ]
 
             if not row_data.empty:
                 url = row_data["URL"].values[0]
@@ -943,7 +1072,13 @@ class DiscogsDownloaderUI(ttk.Frame):
                         failed_files.append(file_path)
                         self.log_to_console(f"Error or stopped extracting {file_path}.", "ERROR")
                 else:
-                    self.log_to_console(f"{file_path} is not a .gz file.", "WARNING")
+                    # Maybe raw .xml or something else
+                    if file_path.exists() and file_path.suffix.lower() == ".xml":
+                        self.log_to_console(f"File {file_path} is already .xml; no extraction needed.", "INFO")
+                        self.data_df.loc[self.data_df["URL"] == url, "Extracted"] = "✔"
+                        self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✖"
+                    else:
+                        self.log_to_console(f"{file_path} is not a .gz file.", "WARNING")
 
         self.populate_table(self.data_df)
         if extracted_files:
@@ -951,10 +1086,15 @@ class DiscogsDownloaderUI(ttk.Frame):
         if failed_files:
             self.log_to_console(f"Failed to extract files: {', '.join(map(str, failed_files))}", "WARNING")
 
+    ###########################################################################
+    #                           CONVERT SELECTED
+    ###########################################################################
     def convert_selected(self):
         """
-        Convert extracted .xml file(s) to CSV using xml_to_df logic,
-        then set "Processed" to "✔".
+        Convert extracted .xml file(s) to a single CSV.
+        If the file is large, chunk it first, then read all chunk_*.xml into
+        one combined DataFrame, and finally write exactly ONE CSV named after
+        the original extracted XML file.
         """
         checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
         if not checked_items:
@@ -964,7 +1104,7 @@ class DiscogsDownloaderUI(ttk.Frame):
         for item in checked_items:
             values = self.tree.item(item, "values")
             month_val = values[1]
-            content_val = values[2]
+            content_val = values[2]  # e.g. "releases", "artists", etc.
             size_val = values[3]
             downloaded_val = values[4]
             extracted_val = values[5]
@@ -984,26 +1124,61 @@ class DiscogsDownloaderUI(ttk.Frame):
                 (self.data_df["Downloaded"] == downloaded_val) &
                 (self.data_df["Extracted"] == extracted_val) &
                 (self.data_df["Processed"] == processed_val)
-            ]
+                ]
 
-            if not row_data.empty:
-                url = row_data["URL"].values[0]
-                folder_name = row_data["month"].values[0]
-                filename = os.path.basename(url)
-                extracted_file = Path.home() / "Downloads" / "Discogs" / "Datasets" / folder_name / filename
-                extracted_file = extracted_file.with_suffix('')  # e.g., strip .gz -> .xml
+            if row_data.empty:
+                continue
 
-                if extracted_file.exists() and extracted_file.suffix.lower() == ".xml":
-                    csv_file = extracted_file.with_suffix('.csv')
-                    self.log_to_console(f"Converting {extracted_file} to {csv_file}...", "INFO")
-                    success = convert_extracted_file_to_csv(extracted_file, csv_file)
+            url = row_data["URL"].values[0]
+            folder_name = row_data["month"].values[0]
+            filename = os.path.basename(url)
+            # e.g. discogs_20240101_releases.xml (after .gz is stripped)
+            extracted_file = (
+                    Path.home() / "Downloads" / "Discogs" / "Datasets" / folder_name / filename
+            ).with_suffix("")  # remove .gz => .xml
+
+            if extracted_file.exists() and extracted_file.suffix.lower() == ".xml":
+                file_size_mb = extracted_file.stat().st_size / (1024 * 1024)
+                combined_csv = extracted_file.with_suffix(".csv")  # final single CSV
+
+                if file_size_mb > 512:
+                    # 1) Chunk the big XML
+                    self.log_to_console(f"File {extracted_file} is {file_size_mb:.2f} MB. Chunking...", "INFO")
+                    chunk_xml_by_type(extracted_file, content_type=content_val, records_per_file=10000)
+
+                    # 2) Read each chunk into memory & combine
+                    chunks_dir = extracted_file.parent / f"chunked_{content_val}"
+                    all_dfs = []
+                    for chunk_file in sorted(chunks_dir.glob("chunk_*.xml")):
+                        self.log_to_console(f"Reading chunk {chunk_file.name}...", "INFO")
+                        try:
+                            df = xml_to_df(chunk_file)
+                            if not df.empty:
+                                all_dfs.append(df)
+                        except Exception as e:
+                            self.log_to_console(f"Failed to parse {chunk_file}: {e}", "ERROR")
+
+                    if all_dfs:
+                        final_df = pd.concat(all_dfs, ignore_index=True)
+                        self.log_to_console(f"Writing combined CSV -> {combined_csv}", "INFO")
+                        final_df.to_csv(combined_csv, index=False)
+                        self.log_to_console(f"All chunks combined into {combined_csv}", "INFO")
+                        # Mark processed
+                        self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✔"
+                    else:
+                        self.log_to_console("No dataframes found. Possibly parse errors?", "WARNING")
+
+                else:
+                    # Single-file is small enough, parse directly
+                    self.log_to_console(f"Converting single XML -> {combined_csv}", "INFO")
+                    success = convert_extracted_file_to_csv(extracted_file, combined_csv)
                     if success:
-                        self.log_to_console(f"Converted: {extracted_file} → {csv_file}", "INFO")
+                        self.log_to_console(f"Converted {extracted_file} → {combined_csv}", "INFO")
                         self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✔"
                     else:
                         self.log_to_console(f"Failed to convert {extracted_file}.", "ERROR")
-                else:
-                    self.log_to_console(f"Extracted file {extracted_file} not found or not .xml!", "ERROR")
+            else:
+                self.log_to_console(f"Extracted file {extracted_file} not found or not .xml!", "ERROR")
 
         self.populate_table(self.data_df)
 
@@ -1019,12 +1194,12 @@ class DiscogsDownloaderUI(ttk.Frame):
     def update_downloaded_size(self):
         downloads_dir = Path.home() / "Downloads" / "Discogs"
         size_in_bytes = self.get_folder_size(downloads_dir)
-        one_gb = 1024**3
+        one_gb = 1024 ** 3
         if size_in_bytes >= one_gb:
             size_in_gb = size_in_bytes // one_gb
             self.downloaded_size_var.set(f"→ {size_in_gb} GB")
         else:
-            size_in_mb = size_in_bytes // (1024**2)
+            size_in_mb = size_in_bytes // (1024 ** 2)
             self.downloaded_size_var.set(f"→ {size_in_mb} MB")
 
     def open_discogs_folder(self):
@@ -1091,6 +1266,7 @@ class DiscogsDownloaderUI(ttk.Frame):
         except Exception as e:
             self.log_to_console(f"Error: {e}", "ERROR")
 
+
 def main():
     # Initialize columns including "Processed"
     empty_df = pd.DataFrame(columns=["month", "content", "size", "last_modified", "key", "URL",
@@ -1115,9 +1291,10 @@ def main():
     center_y = int((screen_height - window_height) / 2)
 
     app.geometry(f'{window_width}x{window_height}+{center_x}+{center_y}')
-    app.resizable(False,False)
+    app.resizable(False, False)
 
     app.mainloop()
+
 
 if __name__ == "__main__":
     main()
