@@ -2,6 +2,7 @@ import time
 import math
 import gzip
 import os
+import shutil  # <-- we use shutil.rmtree() to remove chunk folders
 import requests
 import platform
 import subprocess
@@ -103,9 +104,9 @@ def chunk_xml_by_type(xml_file_path: Path, content_type: str, records_per_file: 
     """
     Chunk a Discogs XML file by the appropriate tag for its 'content_type'.
     e.g. 'releases' => chunk by <release ...>
-         'artists'  => chunk by <artist ...>
-         'masters'  => chunk by <master ...>
-         'labels'   => chunk by <label ...>
+         'artists' => chunk by <artist ...>
+         'masters' => chunk by <master ...>
+         'labels'  => chunk by <label ...>
     If content_type is unknown, default to <release ...>.
 
     We detect new records by a regex on the start tag (like <release ...id=).
@@ -459,7 +460,7 @@ class DiscogsDownloaderUI(ttk.Frame):
         self.style.configure(
             "Treeview.Heading",
             padding=(0, 11),
-            font=("Arial", 13)
+            font=("Arial", 13)  # keep the same font size/style as original
         )
         right_panel.columnconfigure(0, weight=1)
         right_panel.rowconfigure(0, weight=1)
@@ -650,7 +651,7 @@ class DiscogsDownloaderUI(ttk.Frame):
                 (self.data_df["Downloaded"] == downloaded_val) &
                 (self.data_df["Extracted"] == extracted_val) &
                 (self.data_df["Processed"] == processed_val)
-                ]
+            ]
             if not row_data.empty:
                 url = row_data["URL"].values[0]
                 folder_name = row_data["month"].values[0]
@@ -963,7 +964,7 @@ class DiscogsDownloaderUI(ttk.Frame):
                 (self.data_df["Downloaded"] == downloaded_val) &
                 (self.data_df["Extracted"] == extracted_val) &
                 (self.data_df["Processed"] == processed_val)
-                ]
+            ]
             if not row_data.empty:
                 url = row_data["URL"].values[0]
                 last_modified = row_data["last_modified"].values[0]
@@ -1052,7 +1053,7 @@ class DiscogsDownloaderUI(ttk.Frame):
                 (self.data_df["Downloaded"] == downloaded_val) &
                 (self.data_df["Extracted"] == extracted_val) &
                 (self.data_df["Processed"] == processed_val)
-                ]
+            ]
 
             if not row_data.empty:
                 url = row_data["URL"].values[0]
@@ -1095,6 +1096,8 @@ class DiscogsDownloaderUI(ttk.Frame):
         If the file is large, chunk it first, then read all chunk_*.xml into
         one combined DataFrame, and finally write exactly ONE CSV named after
         the original extracted XML file.
+
+        After CSV is created, remove the chunk folder.
         """
         checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
         if not checked_items:
@@ -1124,7 +1127,7 @@ class DiscogsDownloaderUI(ttk.Frame):
                 (self.data_df["Downloaded"] == downloaded_val) &
                 (self.data_df["Extracted"] == extracted_val) &
                 (self.data_df["Processed"] == processed_val)
-                ]
+            ]
 
             if row_data.empty:
                 continue
@@ -1134,7 +1137,7 @@ class DiscogsDownloaderUI(ttk.Frame):
             filename = os.path.basename(url)
             # e.g. discogs_20240101_releases.xml (after .gz is stripped)
             extracted_file = (
-                    Path.home() / "Downloads" / "Discogs" / "Datasets" / folder_name / filename
+                Path.home() / "Downloads" / "Discogs" / "Datasets" / folder_name / filename
             ).with_suffix("")  # remove .gz => .xml
 
             if extracted_file.exists() and extracted_file.suffix.lower() == ".xml":
@@ -1163,6 +1166,14 @@ class DiscogsDownloaderUI(ttk.Frame):
                         self.log_to_console(f"Writing combined CSV -> {combined_csv}", "INFO")
                         final_df.to_csv(combined_csv, index=False)
                         self.log_to_console(f"All chunks combined into {combined_csv}", "INFO")
+
+                        # 3) Remove chunk folder
+                        try:
+                            shutil.rmtree(chunks_dir)
+                            self.log_to_console(f"Deleted chunk folder: {chunks_dir}", "INFO")
+                        except Exception as e:
+                            self.log_to_console(f"Failed to remove chunk folder {chunks_dir}: {e}", "ERROR")
+
                         # Mark processed
                         self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✔"
                     else:
@@ -1275,10 +1286,13 @@ def main():
     empty_df["Extracted"] = "✖"
     empty_df["Processed"] = "✖"
 
+    # Use the "darkly" theme for a dark appearance
     app = ttk.Window("Discogs Data Downloader", themename="darkly")
     primary_color = app.style.colors.primary
+
+    # Optionally, if you want Treeview heading text to be white on dark:
     style = ttk.Style()
-    style.configure("Treeview.Heading", background=primary_color, foreground="white", font=("Helvetica", 10, "bold"))
+    style.configure("Treeview.Heading", background=primary_color, foreground="white")
 
     DiscogsDownloaderUI(app, empty_df)
     window_width = 750
