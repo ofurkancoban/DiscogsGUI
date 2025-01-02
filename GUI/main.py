@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 from threading import Thread, Lock
+import webbrowser  # <-- for opening social media links
 
 import ttkbootstrap as ttk
 from ttkbootstrap import Style
@@ -302,26 +303,27 @@ class DiscogsDownloaderUI(ttk.Frame):
         self.check_vars = {}
         self.checkbuttons = {}
 
-        # Banner image
-        self.banner_image = ttk.PhotoImage(file="assets/logo.png")
-        banner = ttk.Label(self, image=self.banner_image)
-        banner.pack(side="top", fill="x")
-
-        # Load icons
+        #######################################################################
+        # 1) Tüm resimleri eski usül yüklemek için sözlük + self.photoimages
+        #######################################################################
         image_files = {
             'settings': 'icons8-settings-30.png',
-            'stop-download-light': 'icons8-cancel-30.png',
             'download': 'icons8-download-30.png',
+            'stop': 'icons8-cancel-30.png',
             'refresh': 'icons8-refresh-30.png',
-            'stop-light': 'icons8-cancel-30.png',
             'opened-folder': 'icons8-folder-30.png',
-            'logo': 'logo.png',
             'fetch': 'icons8-data-transfer-30.png',
-            'banner': 'banner.png',
             'delete': 'icons8-trash-30.png',
             'extract': 'icons8-open-archive-30.png',
-            'convert': 'icons8-export-csv-30.png'
+            'convert': 'icons8-export-csv-30.png',
+            'logo': 'logo.png',
+            'linkedin': 'linkedin.png',
+            'github': 'github.png',
+            'kaggle': 'kaggle.png',
+            'avatar': 'avatar.png'
         }
+
+        # Liste tutarak bellekten düşmemesini sağlıyoruz
         self.photoimages = []
         imgpath = Path(__file__).parent / 'assets'
         for key, val in image_files.items():
@@ -329,45 +331,90 @@ class DiscogsDownloaderUI(ttk.Frame):
             if _path.exists():
                 self.photoimages.append(ttk.PhotoImage(name=key, file=_path))
 
-        # Top button bar
+        #######################################################################
+        # NEW TOP BANNER FRAME
+        #######################################################################
+        top_banner_frame = ttk.Frame(self)
+        top_banner_frame.pack(side=TOP, fill=X)
+
+        # Discogs logo solda
+        banner = ttk.Label(top_banner_frame, image='logo')
+        banner.pack(side=LEFT, padx=10, pady=5)
+
+        # Sosyal ikonlar sağda
+        social_frame = ttk.Frame(top_banner_frame)
+        social_frame.pack(side=RIGHT, padx=10, pady=5)
+
+        btn_linkedin = ttk.Button(
+            social_frame,
+            image='linkedin',
+            bootstyle=LINK,
+            command=lambda: self.open_url("https://www.linkedin.com/in/ofurkancoban/")
+        )
+        btn_linkedin.pack(side=LEFT, padx=2)
+
+        btn_github = ttk.Button(
+            social_frame,
+            image='github',
+            bootstyle=LINK,
+            command=lambda: self.open_url("https://github.com/ofurkancoban")
+        )
+        btn_github.pack(side=LEFT, padx=2)
+
+        btn_kaggle = ttk.Button(
+            social_frame,
+            image='kaggle',
+            bootstyle=LINK,
+            command=lambda: self.open_url("https://www.kaggle.com/ofurkancoban")
+        )
+        btn_kaggle.pack(side=LEFT, padx=2)
+
+        #######################################################################
+        # ÜST BUTON BAR SIRASI:
+        #    1. Fetch Data
+        #    2. Refresh
+        #    3. Download
+        #    4. Extract
+        #    5. Convert
+        #    6. Delete
+        #    7. Settings
+        #######################################################################
         buttonbar = ttk.Frame(self, style='primary.TFrame')
         buttonbar.pack(fill=X, pady=1, side=TOP)
-        _value = 'Log: Ready.'
-        self.setvar('scroll-message', _value)
+        self.setvar('scroll-message', 'Log: Ready.')
 
+        # 1. Fetch Data
         btn = ttk.Button(buttonbar, text='Fetch Data', image='fetch', compound=TOP, command=self.start_scraping)
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
-        _func = self.download_selected
-        btn = ttk.Button(buttonbar, text='Download', image='download', compound=TOP, command=_func)
+        # 2. Refresh
+        btn = ttk.Button(buttonbar, text='Refresh', image='refresh', compound=TOP, command=self.refresh_data)
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
-        _func = self.stop_download
-        btn = ttk.Button(buttonbar, text='Stop', image='stop-light', compound=TOP, command=_func)
+        # 3. Download
+        btn = ttk.Button(buttonbar, text='Download', image='download', compound=TOP, command=self.download_selected)
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
-        _func = self.refresh_data
-        btn = ttk.Button(buttonbar, text='Refresh', image='refresh', compound=TOP, command=_func)
+        # 4. Extract
+        btn = ttk.Button(buttonbar, text='Extract', image='extract', compound=TOP, command=self.extract_selected)
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
-        btn = ttk.Button(buttonbar, text='Delete', image='delete', compound=TOP,
-                         command=self.delete_selected)
+        # 5. Convert
+        btn = ttk.Button(buttonbar, text='Convert', image='convert', compound=TOP, command=self.convert_selected)
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
-        btn = ttk.Button(buttonbar, text='Extract', image='extract', compound=TOP,
-                         command=self.extract_selected)
+        # 6. Delete
+        btn = ttk.Button(buttonbar, text='Delete', image='delete', compound=TOP, command=self.delete_selected)
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
-        # UPDATED "CONVERT" BUTTON
-        btn = ttk.Button(buttonbar, text='Convert', image='convert', compound=TOP,
-                         command=self.convert_selected)
-        btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
-
+        # 7. Settings
         _func = lambda: Messagebox.ok(message='Open Settings')
         btn = ttk.Button(buttonbar, text='Settings', image='settings', compound=TOP, command=_func)
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
-        # Left panel
+        #######################################################################
+        # SOL PANEL
+        #######################################################################
         left_panel = ttk.Frame(self, style='bg.TFrame', width=250)
         left_panel.pack(side=LEFT, fill=Y)
         left_panel.pack_propagate(False)
@@ -394,18 +441,21 @@ class DiscogsDownloaderUI(ttk.Frame):
         lbl.grid(row=3, column=0, sticky=W, padx=0, pady=2)
 
         sep = ttk.Separator(ds_frm, bootstyle=SECONDARY)
-        sep.grid(row=6, column=0, columnspan=2, pady=10, sticky=EW)
+        sep.grid(row=4, column=0, columnspan=2, pady=5, sticky=EW)
 
         _func = self.open_discogs_folder
-        open_btn = ttk.Button(ds_frm, text='Open Folder', command=_func, bootstyle=LINK,
+        open_btn = ttk.Button(ds_frm, text='Open Folder', command=_func,
                               image='opened-folder', compound=LEFT)
-        open_btn.grid(row=5, column=0, columnspan=2, sticky=W)
+        open_btn.grid(row=5, column=0, columnspan=2, sticky=EW)
+
+        sep = ttk.Separator(ds_frm, bootstyle=SECONDARY)
+        sep.grid(row=6, column=0, columnspan=2, pady=5, sticky=EW)
 
         # Status panel
         status_cf = CollapsingFrame(left_panel)
         status_cf.pack(fill=BOTH, pady=1)
 
-        status_frm = ttk.Frame(status_cf, padding=10)
+        status_frm = ttk.Frame(status_cf, padding=5)
         status_frm.columnconfigure(1, weight=1)
         status_cf.add(child=status_frm, title='Status', bootstyle=SECONDARY)
 
@@ -414,7 +464,7 @@ class DiscogsDownloaderUI(ttk.Frame):
         self.setvar('prog-message', 'Idle...')
 
         pb = ttk.Progressbar(status_frm, length=200, mode="determinate", bootstyle=SUCCESS)
-        pb.grid(row=1, column=0, columnspan=2, sticky=EW, pady=(10, 5))
+        pb.grid(row=1, column=0, columnspan=2, sticky=EW, pady=(5, 5))
         self.pb = pb
         self.pb["value"] = 0
 
@@ -435,24 +485,25 @@ class DiscogsDownloaderUI(ttk.Frame):
         self.setvar('prog-time-left', 'Left: 0 sec')
 
         sep = ttk.Separator(status_frm, bootstyle=SECONDARY)
-        sep.grid(row=6, column=0, columnspan=2, pady=10, sticky=EW)
+        sep.grid(row=6, column=0, columnspan=2, pady=5, sticky=EW)
 
-        _func = self.stop_download
-        btn = ttk.Button(status_frm, text='Stop', command=_func, bootstyle=LINK,
-                         image='stop-download-light', compound=LEFT)
-        btn.grid(row=7, column=0, columnspan=2, sticky=W)
+        stop_btn = ttk.Button(status_frm, command=self.stop_download, image='stop', text='Stop Download', compound=LEFT)
+        stop_btn.grid(row=7, column=0, columnspan=2, sticky=EW)
+
+
 
         sep = ttk.Separator(status_frm, bootstyle=SECONDARY)
-        sep.grid(row=8, column=0, columnspan=2, pady=10, sticky=EW)
+        sep.grid(row=8, column=0, columnspan=2, pady=5, sticky=EW)
 
-        lbl = ttk.Label(status_frm, textvariable='current-file-msg')
-        lbl.grid(row=9, column=0, columnspan=2, pady=2, sticky=EW)
-        self.setvar('current-file-msg', 'No file downloading')
 
-        lbl = ttk.Label(left_panel, image='logo', style='bg.TLabel')
-        lbl.pack(side='right')
 
-        # Right panel
+        # Soldaki panelin en altına, ortalı olacak şekilde avatar resmi yerleştiriyoruz
+        lbl = ttk.Label(left_panel, image='avatar', style='bg.TLabel')
+        lbl.pack(side='top', anchor='center', pady=0)
+
+        #######################################################################
+        # SAĞ PANEL
+        #######################################################################
         right_panel = ttk.Frame(self, padding=(2, 0))
         right_panel.pack(side=RIGHT, fill=BOTH, expand=NO)
 
@@ -460,7 +511,7 @@ class DiscogsDownloaderUI(ttk.Frame):
         self.style.configure(
             "Treeview.Heading",
             padding=(0, 11),
-            font=("Arial", 13)  # keep the same font size/style as original
+            font=("Arial", 13)
         )
         right_panel.columnconfigure(0, weight=1)
         right_panel.rowconfigure(0, weight=1)
@@ -529,6 +580,10 @@ class DiscogsDownloaderUI(ttk.Frame):
         # Start scraping after short delay
         self.after(100, self.start_scraping)
         self.update_downloaded_size()
+
+    def open_url(self, url):
+        """Open a given URL in the default web browser."""
+        webbrowser.open_new_tab(url)
 
     def refresh_data(self):
         if self.data_df.empty:
@@ -699,7 +754,7 @@ class DiscogsDownloaderUI(ttk.Frame):
             line_start_index = f"{line_number}.0"
             line_end_index = f"{line_number}.end"
             self.console_text.tag_add("blue_line", line_start_index, line_end_index)
-            self.console_text.tag_config("blue_line", foreground="blue")
+            self.console_text.tag_config("blue_line", foreground="#4e92e4")
 
         self.console_text.config(state='disabled')
         self.console_text.see('end')
@@ -939,6 +994,7 @@ class DiscogsDownloaderUI(ttk.Frame):
         self.update_downloaded_size()
 
     def stop_download(self):
+        """Removed from UI, but you could still call this internally if needed."""
         self.stop_flag = True
         self.log_to_console("Operation Stopped. Cleaning up...", "WARNING")
 
@@ -1135,7 +1191,7 @@ class DiscogsDownloaderUI(ttk.Frame):
             url = row_data["URL"].values[0]
             folder_name = row_data["month"].values[0]
             filename = os.path.basename(url)
-            # e.g. discogs_20240101_releases.xml (after .gz is stripped)
+            # e.g. discogs_YYYYMMDD_releases.xml (after .gz is stripped)
             extracted_file = (
                 Path.home() / "Downloads" / "Discogs" / "Datasets" / folder_name / filename
             ).with_suffix("")  # remove .gz => .xml
@@ -1149,7 +1205,7 @@ class DiscogsDownloaderUI(ttk.Frame):
                     self.log_to_console(f"File {extracted_file} is {file_size_mb:.2f} MB. Chunking...", "INFO")
                     chunk_xml_by_type(extracted_file, content_type=content_val, records_per_file=10000)
 
-                    # 2) Read each chunk into memory & combine
+                    # 2) Read each chunk & combine
                     chunks_dir = extracted_file.parent / f"chunked_{content_val}"
                     all_dfs = []
                     for chunk_file in sorted(chunks_dir.glob("chunk_*.xml")):
