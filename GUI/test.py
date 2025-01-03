@@ -415,6 +415,7 @@ class DiscogsDownloaderUI(ttk.Frame):
         #######################################################################
         image_files = {
             'settings': 'icons8-settings-30.png',
+            'info': 'icons8-info-30.png',  # [UPDATED] Info simgesi eklendi
             'download': 'icons8-download-30.png',
             'stop': 'icons8-cancel-30.png',
             'refresh': 'icons8-refresh-30.png',
@@ -436,6 +437,8 @@ class DiscogsDownloaderUI(ttk.Frame):
             _path = imgpath / val
             if _path.exists():
                 self.photoimages.append(ttk.PhotoImage(name=key, file=_path))
+            else:
+                print(f"[WARNING] Image file not found: {_path}")
 
         #######################################################################
         # NEW TOP BANNER FRAME
@@ -513,6 +516,16 @@ class DiscogsDownloaderUI(ttk.Frame):
             image='settings',
             compound=TOP,
             command=self.open_settings  # Ayarlar penceresi
+        )
+        btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
+
+        # [UPDATED] 8. Info Butonu Eklendi
+        btn = ttk.Button(
+            buttonbar,
+            text='Info',
+            image='info',  # Info simgesi eklendi
+            compound=TOP,
+            command=self.open_info  # Info popup açacak metod
         )
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
@@ -683,6 +696,7 @@ class DiscogsDownloaderUI(ttk.Frame):
 
     # [UPDATED] Yeni metod: Kullanıcının indirme klasörü seçmesi ve Discogs klasörü oluşturulması
     # Ayrıca Fetch Data otomatik olarak tetikleniyor
+    # Ve Info butonuna tıklanınca bilgi penceresi açılıyor
     def open_settings(self):
         """Kullanıcının indirilecek klasörü seçmesini sağlayan dialog ve Discogs klasörü oluşturur.
            Ardından Fetch Data işlemini otomatik olarak başlatır."""
@@ -704,6 +718,105 @@ class DiscogsDownloaderUI(ttk.Frame):
                 messagebox.showerror("Error", f"Could not create Discogs folder: {e}")
         else:
             self.log_to_console("No folder selected. Keeping current setting.", "INFO")
+
+    # [UPDATED] Yeni metod: Info butonu için
+    def open_info(self):
+        """Uygulamanın nasıl kullanılacağına dair bilgi penceresini açar."""
+        info_window = ttk.Toplevel(self)
+        info_window.title("How to Use Discogs Data Downloader")
+        info_window.geometry("600x500")
+        info_window.resizable(False, False)
+
+        # Merkezi yerleştirmek için pencereyi ortala
+        window_width = 600
+        window_height = 500
+
+        screen_width = info_window.winfo_screenwidth()
+        screen_height = info_window.winfo_screenheight()
+
+        center_x = int((screen_width - window_width) / 2)
+        center_y = int((screen_height - window_height) / 2)
+
+        info_window.geometry(f'{window_width}x{window_height}+{center_x}+{center_y}')
+
+        # Pencereyi modal yap
+        info_window.grab_set()
+
+        # Scrollable text
+        text_area = ScrolledText(info_window, wrap='word', state='normal', font=("Arial", 12))
+        text_area.pack(fill=BOTH, expand=True, padx=10, pady=10)
+
+        # Bilgi metni
+        info_text = """
+**Discogs Data Downloader Kullanım Kılavuzu**
+
+**Giriş**
+Bu uygulama, Discogs veri setlerini otomatik olarak indirmenize, çıkarmanıza ve CSV formatına dönüştürmenize yardımcı olur. Kullanıcı dostu arayüzü sayesinde işlemleri kolayca yönetebilirsiniz.
+
+**Başlangıç**
+1. **Download Folder Seçimi:**
+   - **Settings** butonuna tıklayarak indirme klasörünüzü seçebilirsiniz.
+   - Seçtiğiniz klasörde otomatik olarak bir **Discogs** klasörü oluşturulur. Tüm indirme, çıkarma ve dönüştürme işlemleri bu klasör altında gerçekleşir.
+   - Varsayılan olarak `~/Downloads/Discogs` klasörü kullanılır.
+
+2. **Fetch Data:**
+   - Uygulama ilk açıldığında otomatik olarak en güncel verileri Fetch Data butonu aracılığıyla çeker.
+   - **Fetch Data** butonuna tıklayarak verileri manuel olarak da çekebilirsiniz.
+
+**Butonların İşlevleri**
+- **Fetch Data:** Discogs S3 deposundan en güncel veri setlerini çeker ve arayüzde listeler.
+- **Refresh:** Mevcut veri listesini yeniler ve güncel durumu gösterir.
+- **Download:** Seçili veri setlerini indirir. İndirilen dosyalar `Discogs/Datasets/<month>/` klasörüne kaydedilir.
+- **Extract:** İndirilen `.gz` dosyalarını çıkarır ve `.xml` formatına dönüştürür.
+- **Convert:** Çıkarılmış `.xml` dosyalarını CSV formatına dönüştürür. Büyük dosyalar için akış yöntemi kullanılır.
+- **Delete:** Seçili dosyaları diskinizden siler ve durumunu ✖ olarak günceller.
+- **Settings:** İndirme klasörünüzü seçmenizi sağlar. Klasör değiştirildiğinde otomatik olarak Fetch Data işlemi başlatılır.
+- **Info:** Bu kullanım kılavuzunu görüntüler.
+
+**Kullanım Adımları**
+1. **Download Folder Ayarlama:**
+   - **Settings** butonuna tıklayın.
+   - İstediğiniz bir klasör seçin. Uygulama, seçilen klasörde otomatik olarak bir **Discogs** klasörü oluşturacaktır.
+   - Klasör seçildikten sonra Fetch Data işlemi otomatik olarak başlatılacaktır.
+
+2. **Verileri İndirme:**
+   - **Fetch Data** butonuna tıklayarak veya uygulama açıldığında otomatik olarak en güncel verileri çekin.
+   - Sağ panelde listelenen veri setlerinden indirmek istediğinizleri seçin ve **Download** butonuna tıklayın.
+
+3. **Verileri Çıkarma:**
+   - İndirdiğiniz `.gz` dosyalarını seçin ve **Extract** butonuna tıklayın.
+   - Çıkarma işlemi tamamlandığında dosyalar `.xml` formatında olacaktır.
+
+4. **Verileri Dönüştürme:**
+   - `.xml` dosyalarını seçin ve **Convert** butonuna tıklayın.
+   - Veriler CSV formatına dönüştürülecek ve `Discogs/Datasets/<month>/` klasöründe `.csv` dosyası olarak kaydedilecektir.
+
+5. **Dosyaları Silme:**
+   - İndirme, çıkarma veya dönüştürme işlemlerini iptal etmek veya gereksiz dosyaları silmek için ilgili dosyaları seçin ve **Delete** butonuna tıklayın.
+
+**Durum Takibi ve Loglar**
+- Sol paneldeki **Status** bölümü, indirme ve işleme işlemlerinizin durumunu gösterir.
+- Sağ paneldeki **Log** konsolu, uygulamanın yaptığı işlemler hakkında detaylı bilgi sağlar.
+
+**Ek İpuçları**
+- **Progress Bar:** İndirme ve işleme işlemlerinin ne kadar ilerlediğini gösterir.
+- **Speed ve Time Metrics:** İndirme hızı, geçen süre ve tahmini kalan süre gibi bilgileri sunar.
+- **Open Folder:** İndirme klasörünü doğrudan açmak için sol paneldeki **Open Folder** butonunu kullanabilirsiniz.
+
+**Destek**
+- Herhangi bir sorunla karşılaşırsanız, log konsolundaki mesajları kontrol edin veya geliştirici ile iletişime geçin.
+
+**Teşekkürler!**
+Uygulamamızı kullanarak Discogs veri setlerine erişim sağladığınız için teşekkür ederiz. İyi çalışmalar!
+"""
+
+        # Metni yerleştir ve etiketi düzenle
+        text_area.insert('1.0', info_text)
+        text_area.config(state='disabled')  # Metni sadece okunabilir yap
+
+        # Pencereyi kullanıcı etkileşimine kapat
+        btn_close = ttk.Button(info_window, text="Close", command=info_window.destroy)
+        btn_close.pack(pady=10)
 
     def open_url(self, url):
         """Open a given URL in the default web browser."""
