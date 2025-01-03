@@ -12,6 +12,11 @@ from datetime import datetime
 from pathlib import Path
 from threading import Thread, Lock
 import webbrowser  # <-- for opening social media links
+import re
+import csv
+
+# [UPDATED] Yeni import: Klasör seçme dialogu için
+from tkinter import filedialog
 
 import ttkbootstrap as ttk
 from ttkbootstrap import Style
@@ -19,8 +24,6 @@ from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from tkinter import messagebox
 from tkinter.scrolledtext import ScrolledText
-import re
-import csv
 
 ###############################################################################
 #                          File-Type → XML Tag Mapping
@@ -273,6 +276,7 @@ def convert_chunked_files_to_csv(chunk_folder: Path, output_csv: Path, content_t
 #                             S3 + UI + Main Logic
 ###############################################################################
 
+# [UPDATED] Simgelerin bulunduğu assets klasörü için PATH
 PATH = Path(__file__).parent / 'assets'
 
 
@@ -398,6 +402,10 @@ class DiscogsDownloaderUI(ttk.Frame):
         self.data_df = data_df
         self.stop_flag = False
 
+        # [UPDATED] Yeni değişken: İndirme klasörü (varsayılan: ~/Downloads/Discogs)
+        default_download_dir = Path.home() / "Downloads" / "Discogs"
+        self.download_dir_var = ttk.StringVar(value=str(default_download_dir))
+
         # For checkboxes in table
         self.check_vars = {}
         self.checkbuttons = {}
@@ -422,7 +430,6 @@ class DiscogsDownloaderUI(ttk.Frame):
             'avatar': 'avatar.png'
         }
 
-        # Liste tutarak bellekten düşmemesini sağlıyoruz
         self.photoimages = []
         imgpath = Path(__file__).parent / 'assets'
         for key, val in image_files.items():
@@ -469,14 +476,7 @@ class DiscogsDownloaderUI(ttk.Frame):
         btn_kaggle.pack(side=LEFT, padx=2)
 
         #######################################################################
-        # ÜST BUTON BAR SIRASI:
-        #    1. Fetch Data
-        #    2. Refresh
-        #    3. Download
-        #    4. Extract
-        #    5. Convert
-        #    6. Delete
-        #    7. Settings
+        # ÜST BUTON BAR
         #######################################################################
         buttonbar = ttk.Frame(self, style='primary.TFrame')
         buttonbar.pack(fill=X, pady=1, side=TOP)
@@ -506,9 +506,14 @@ class DiscogsDownloaderUI(ttk.Frame):
         btn = ttk.Button(buttonbar, text='Delete', image='delete', compound=TOP, command=self.delete_selected)
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
-        # 7. Settings
-        _func = lambda: Messagebox.ok(message='Open Settings')
-        btn = ttk.Button(buttonbar, text='Settings', image='settings', compound=TOP, command=_func)
+        # [UPDATED] 7. Settings - Komut değiştirildi ve Fetch Data tetiklendi
+        btn = ttk.Button(
+            buttonbar,
+            text='Settings',
+            image='settings',
+            compound=TOP,
+            command=self.open_settings  # Ayarlar penceresi
+        )
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
         #######################################################################
@@ -527,10 +532,10 @@ class DiscogsDownloaderUI(ttk.Frame):
 
         lbl = ttk.Label(ds_frm, text='Download Folder:')
         lbl.grid(row=0, column=0, sticky=W, pady=2)
-        lbl = ttk.Label(ds_frm, textvariable='downloadfolder')
-        lbl.grid(row=1, column=0, sticky=W, padx=0, pady=2)
-        downloads_dir = Path.home() / "Downloads" / "Discogs"
-        self.setvar('downloadfolder', f" → {str(downloads_dir)}")
+
+        # [UPDATED] Klasör etiketini self.download_dir_var ile eşleştir
+        self.download_folder_label = ttk.Label(ds_frm, textvariable=self.download_dir_var)
+        self.download_folder_label.grid(row=1, column=0, sticky=W, padx=0, pady=2)
 
         lbl = ttk.Label(ds_frm, text='Size of Downloaded Files:')
         lbl.grid(row=2, column=0, sticky=W, pady=2)
@@ -676,6 +681,30 @@ class DiscogsDownloaderUI(ttk.Frame):
         self.after(100, self.start_scraping)
         self.update_downloaded_size()
 
+    # [UPDATED] Yeni metod: Kullanıcının indirme klasörü seçmesi ve Discogs klasörü oluşturulması
+    # Ayrıca Fetch Data otomatik olarak tetikleniyor
+    def open_settings(self):
+        """Kullanıcının indirilecek klasörü seçmesini sağlayan dialog ve Discogs klasörü oluşturur.
+           Ardından Fetch Data işlemini otomatik olarak başlatır."""
+        chosen_dir = filedialog.askdirectory(
+            title="Select Download Folder",
+            initialdir=self.download_dir_var.get()
+        )
+        if chosen_dir:
+            discogs_dir = Path(chosen_dir) / "Discogs"
+            try:
+                discogs_dir.mkdir(parents=True, exist_ok=True)
+                self.download_dir_var.set(str(discogs_dir))
+                self.log_to_console(f"Download folder changed to: {discogs_dir}", "INFO")
+                self.update_downloaded_size()  # seçilen klasörün boyutunu göstermek için
+                self.log_to_console("Fetching data automatically after changing download folder...", "INFO")
+                self.start_scraping()  # [UPDATED] Fetch Data tetikleme
+            except Exception as e:
+                self.log_to_console(f"Error creating Discogs folder: {e}", "ERROR")
+                messagebox.showerror("Error", f"Could not create Discogs folder: {e}")
+        else:
+            self.log_to_console("No folder selected. Keeping current setting.", "INFO")
+
     def open_url(self, url):
         """Open a given URL in the default web browser."""
         webbrowser.open_new_tab(url)
@@ -806,7 +835,8 @@ class DiscogsDownloaderUI(ttk.Frame):
                 url = row_data["URL"].values[0]
                 folder_name = row_data["month"].values[0]
                 filename = os.path.basename(url)
-                file_path = Path.home() / "Downloads" / "Discogs" / "Datasets" / folder_name / filename
+                # [UPDATED] Klasör güncel
+                file_path = Path(self.download_dir_var.get()) / "Datasets" / folder_name / filename
 
                 csv_path = file_path.with_suffix('.csv')
 
@@ -867,7 +897,8 @@ class DiscogsDownloaderUI(ttk.Frame):
             if col not in data_df.columns:
                 data_df[col] = "✖"
 
-        downloads_dir = Path.home() / "Downloads" / "Discogs" / "Datasets"
+        # [UPDATED] Yine indirme klasörü
+        downloads_dir = Path(self.download_dir_var.get()) / "Datasets"
         for idx, row in data_df.iterrows():
             folder_name = str(row["month"])
             filename = os.path.basename(row["URL"])
@@ -910,7 +941,8 @@ class DiscogsDownloaderUI(ttk.Frame):
         Thread(target=self.download_file, args=(url, filename, folder_name), daemon=True).start()
 
     def parallel_download(self, url, filename, folder_name, total_size):
-        downloads_dir = Path.home() / "Downloads" / "Discogs" / "Datasets"
+        # [UPDATED]
+        downloads_dir = Path(self.download_dir_var.get()) / "Datasets"
         target_dir = downloads_dir / folder_name
         target_dir.mkdir(parents=True, exist_ok=True)
         file_path = target_dir / filename
@@ -924,17 +956,21 @@ class DiscogsDownloaderUI(ttk.Frame):
 
         def download_segment(idx, start, end):
             headers = {"Range": f"bytes={start}-{end}"}
-            r = requests.get(url, headers=headers, stream=True)
-            part_file = file_path.with_name(file_path.name + f".part{idx}")
-            partial_paths.append(part_file)
-            with open(part_file, "wb") as f:
-                for chunk in r.iter_content(1024 * 64):
-                    if self.stop_flag:
-                        return
-                    if chunk:
-                        f.write(chunk)
-                        with lock:
-                            thread_progress[idx] += len(chunk)
+            try:
+                r = requests.get(url, headers=headers, stream=True)
+                r.raise_for_status()
+                part_file = file_path.with_name(file_path.name + f".part{idx}")
+                partial_paths.append(part_file)
+                with open(part_file, "wb") as f:
+                    for chunk in r.iter_content(1024 * 64):
+                        if self.stop_flag:
+                            return
+                        if chunk:
+                            f.write(chunk)
+                            with lock:
+                                thread_progress[idx] += len(chunk)
+            except Exception as e:
+                self.log_to_console(f"Error in thread {idx}: {e}", "ERROR")
 
         start_time = datetime.now()
         self.setvar('prog-time-started', f'Started at: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
@@ -993,6 +1029,7 @@ class DiscogsDownloaderUI(ttk.Frame):
         return True
 
     def download_file(self, url, filename, folder_name):
+        file_path = None
         try:
             self.setvar('prog-message', 'Preparing download...')
             head = requests.head(url)
@@ -1005,7 +1042,7 @@ class DiscogsDownloaderUI(ttk.Frame):
                 if not success:
                     if self.stop_flag:
                         self.log_to_console("Operation Stopped", "WARNING")
-                        file_path = (Path.home() / "Downloads" / "Discogs" / "Datasets" / folder_name / filename)
+                        file_path = Path(self.download_dir_var.get()) / "Datasets" / folder_name / filename
                         if file_path.exists():
                             file_path.unlink()
                             self.log_to_console(f"Incomplete file {file_path} deleted.", "WARNING")
@@ -1015,7 +1052,7 @@ class DiscogsDownloaderUI(ttk.Frame):
                         self.log_to_console("Parallel download failed, falling back to single-thread.", "WARNING")
                         self.single_thread_download(url, filename, folder_name)
                 else:
-                    downloads_dir = Path.home() / "Downloads" / "Discogs" / "Datasets"
+                    downloads_dir = Path(self.download_dir_var.get()) / "Datasets"
                     file_path = downloads_dir / folder_name / filename
                     self.log_to_console(f"{filename} successfully downloaded: {file_path}", "INFO")
                     # Mark downloaded as ✔, extracted -> ✖, processed -> ✖
@@ -1030,66 +1067,73 @@ class DiscogsDownloaderUI(ttk.Frame):
 
         except Exception as e:
             self.log_to_console(f"Error: {e}", "ERROR")
-            if 'file_path' in locals() and file_path.exists():
+            if file_path and file_path.exists():
                 file_path.unlink()
                 self.log_to_console(f"Incomplete file {file_path} deleted.", "WARNING")
 
     def single_thread_download(self, url, filename, folder_name):
         self.log_to_console("Partial downloads not supported. Using single-threaded download.", "INFO")
-        downloads_dir = Path.home() / "Downloads" / "Discogs" / "Datasets"
+        downloads_dir = Path(self.download_dir_var.get()) / "Datasets"
         target_dir = downloads_dir / folder_name
         target_dir.mkdir(parents=True, exist_ok=True)
         file_path = target_dir / filename
 
-        response = requests.get(url, stream=True)
-        total_size = int(response.headers.get('content-length', 0))
-        block_size = 1024 * 64
-        self.pb["value"] = 0
-        self.pb["maximum"] = total_size
+        try:
+            response = requests.get(url, stream=True)
+            total_size = int(response.headers.get('content-length', 0))
+            block_size = 1024 * 64
+            self.pb["value"] = 0
+            self.pb["maximum"] = total_size
 
-        start_time = datetime.now()
-        self.setvar('prog-time-started', f'Started at: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
-        downloaded_size = 0
+            start_time = datetime.now()
+            self.setvar('prog-time-started', f'Started at: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
+            downloaded_size = 0
 
-        with open(file_path, "wb") as file:
-            for data in response.iter_content(block_size):
-                if self.stop_flag:
-                    self.setvar('prog-message', 'Idle...')
-                    self.log_to_console("Operation Stopped", "WARNING")
-                    file.close()
-                    if file_path.exists():
-                        os.remove(file_path)
-                        self.log_to_console(f"Incomplete file {file_path} deleted.", "WARNING")
-                    return
-                file.write(data)
-                downloaded_size += len(data)
-                self.pb["value"] = downloaded_size
-                elapsed = (datetime.now() - start_time).total_seconds()
+            with open(file_path, "wb") as file:
+                for data in response.iter_content(block_size):
+                    if self.stop_flag:
+                        self.setvar('prog-message', 'Idle...')
+                        self.log_to_console("Operation Stopped", "WARNING")
+                        file.close()
+                        if file_path.exists():
+                            os.remove(file_path)
+                            self.log_to_console(f"Incomplete file {file_path} deleted.", "WARNING")
+                        return
+                    file.write(data)
+                    downloaded_size += len(data)
+                    self.pb["value"] = downloaded_size
+                    elapsed = (datetime.now() - start_time).total_seconds()
 
-                speed = (downloaded_size / elapsed) / (1024 * 1024) if elapsed > 0 else 0.0
-                self.setvar('prog-speed', f'Speed: {speed:.2f} MB/s')
-                self.setvar('prog-time-elapsed', f'Elapsed: {int(elapsed) // 60} min {int(elapsed) % 60} sec')
+                    speed = (downloaded_size / elapsed) / (1024 * 1024) if elapsed > 0 else 0.0
+                    self.setvar('prog-speed', f'Speed: {speed:.2f} MB/s')
+                    self.setvar('prog-time-elapsed', f'Elapsed: {int(elapsed) // 60} min {int(elapsed) % 60} sec')
 
-                if total_size > 0 and downloaded_size > 0:
-                    percentage = (downloaded_size / total_size) * 100
-                    left = int(
-                        (total_size - downloaded_size) / (downloaded_size / elapsed)) if downloaded_size > 0 else 0
-                    left_minutes = left // 60
-                    left_seconds = left % 60
-                    self.setvar('prog-time-left', f'Left: {left_minutes} min {left_seconds} sec')
-                    self.setvar('prog-message', f'Downloading {filename}: {percentage:.2f}%')
-                    self.setvar('current-file-msg', f'Current file: {file_path}')
+                    if total_size > 0 and downloaded_size > 0:
+                        percentage = (downloaded_size / total_size) * 100
+                        left = int(
+                            (total_size - downloaded_size) / (downloaded_size / elapsed)) if downloaded_size > 0 else 0
+                        left_minutes = left // 60
+                        left_seconds = left % 60
+                        self.setvar('prog-time-left', f'Left: {left_minutes} min {left_seconds} sec')
+                        self.setvar('prog-message', f'Downloading {filename}: {percentage:.2f}%')
+                        self.setvar('current-file-msg', f'Current file: {file_path}')
 
-        self.setvar('prog-message', 'Idle...')
-        self.log_to_console(f"{filename} successfully downloaded: {file_path}", "INFO")
-        self.data_df.loc[self.data_df["URL"] == url, "Downloaded"] = "✔"
-        self.data_df.loc[self.data_df["URL"] == url, "Extracted"] = "✖"
-        self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✖"
-        self.populate_table(self.data_df)
-        self.update_downloaded_size()
+            self.setvar('prog-message', 'Idle...')
+            self.log_to_console(f"{filename} successfully downloaded: {file_path}", "INFO")
+            self.data_df.loc[self.data_df["URL"] == url, "Downloaded"] = "✔"
+            self.data_df.loc[self.data_df["URL"] == url, "Extracted"] = "✖"
+            self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✖"
+            self.populate_table(self.data_df)
+            self.update_downloaded_size()
+
+        except Exception as e:
+            self.log_to_console(f"Error during single-threaded download: {e}", "ERROR")
+            if file_path.exists():
+                file_path.unlink()
+                self.log_to_console(f"Incomplete file {file_path} deleted.", "WARNING")
 
     def stop_download(self):
-        """Removed from UI, but you could still call this internally if needed."""
+        """Stopped flagı True yapılır ve işlemler durdurulur."""
         self.stop_flag = True
         self.log_to_console("Operation Stopped. Cleaning up...", "WARNING")
 
@@ -1135,40 +1179,45 @@ class DiscogsDownloaderUI(ttk.Frame):
         extracted_size = 0
         block_size = 1024 * 64
 
-        with gzip.open(file_path, 'rb') as f_in, open(output_path, 'wb') as f_out:
-            while not self.stop_flag:
-                chunk = f_in.read(block_size)
-                if not chunk:
-                    break
-                f_out.write(chunk)
-                extracted_size += len(chunk)
-                self.pb["value"] = extracted_size
+        try:
+            with gzip.open(file_path, 'rb') as f_in, open(output_path, 'wb') as f_out:
+                while not self.stop_flag:
+                    chunk = f_in.read(block_size)
+                    if not chunk:
+                        break
+                    f_out.write(chunk)
+                    extracted_size += len(chunk)
+                    self.pb["value"] = extracted_size
 
-                elapsed = (datetime.now() - start_time).total_seconds()
-                if elapsed > 0:
-                    speed = (extracted_size / elapsed) / (1024 * 1024)
-                else:
-                    speed = 0.0
+                    elapsed = (datetime.now() - start_time).total_seconds()
+                    if elapsed > 0:
+                        speed = (extracted_size / elapsed) / (1024 * 1024)
+                    else:
+                        speed = 0.0
 
-                self.setvar('prog-speed', f"Extract Speed: {speed:.2f} MB/s")
+                    self.setvar('prog-speed', f"Extract Speed: {speed:.2f} MB/s")
 
-                if total_size > 0:
-                    percentage = (extracted_size / total_size) * 100
-                    self.setvar('prog-message', f"Extracting {file_path.name}: {percentage:.2f}%")
-                    elapsed_minutes = int(elapsed) // 60
-                    elapsed_seconds = int(elapsed) % 60
-                    self.setvar('prog-time-elapsed', f'Elapsed: {elapsed_minutes} min {elapsed_seconds} sec')
-                    if extracted_size > 0:
-                        rate = extracted_size / elapsed if elapsed > 0 else 0
-                        left = int((total_size - extracted_size) / rate) if rate > 0 else 0
-                        left_minutes = left // 60
-                        left_seconds = left % 60
-                        self.setvar('prog-time-left', f'Left: {left_minutes} min {left_seconds} sec')
-                else:
-                    self.setvar('prog-message', "Extracting...")
+                    if total_size > 0:
+                        percentage = (extracted_size / total_size) * 100
+                        self.setvar('prog-message', f"Extracting {file_path.name}: {percentage:.2f}%")
+                        elapsed_minutes = int(elapsed) // 60
+                        elapsed_seconds = int(elapsed) % 60
+                        self.setvar('prog-time-elapsed', f'Elapsed: {elapsed_minutes} min {elapsed_seconds} sec')
+                        if extracted_size > 0:
+                            rate = extracted_size / elapsed if elapsed > 0 else 0
+                            left = int((total_size - extracted_size) / rate) if rate > 0 else 0
+                            left_minutes = left // 60
+                            left_seconds = left % 60
+                            self.setvar('prog-time-left', f'Left: {left_minutes} min {left_seconds} sec')
+                    else:
+                        self.setvar('prog-message', "Extracting...")
 
-        self.setvar('prog-message', 'Idle...')
-        return not self.stop_flag
+            self.setvar('prog-message', 'Idle...')
+            return not self.stop_flag
+
+        except Exception as e:
+            self.log_to_console(f"Error extracting {file_path}: {e}", "ERROR")
+            return False
 
     def extract_selected(self):
         self.log_to_console("Extracting started...", "INFO")
@@ -1210,7 +1259,8 @@ class DiscogsDownloaderUI(ttk.Frame):
                 url = row_data["URL"].values[0]
                 folder_name = row_data["month"].values[0]
                 filename = os.path.basename(url)
-                file_path = Path.home() / "Downloads" / "Discogs" / "Datasets" / folder_name / filename
+                # [UPDATED]
+                file_path = Path(self.download_dir_var.get()) / "Datasets" / folder_name / filename
 
                 if file_path.suffix.lower() == ".gz":
                     success = self.extract_gz_file_with_progress(file_path)
@@ -1287,9 +1337,9 @@ class DiscogsDownloaderUI(ttk.Frame):
             url = row_data["URL"].values[0]
             folder_name = row_data["month"].values[0]
             filename = os.path.basename(url)
-            # e.g. discogs_YYYYMMDD_releases.xml (after .gz is stripped)
+            # [UPDATED]
             extracted_file = (
-                Path.home() / "Downloads" / "Discogs" / "Datasets" / folder_name / filename
+                Path(self.download_dir_var.get()) / "Datasets" / folder_name / filename
             ).with_suffix("")  # remove .gz => .xml
 
             if extracted_file.exists() and extracted_file.suffix.lower() == ".xml":
@@ -1357,7 +1407,11 @@ class DiscogsDownloaderUI(ttk.Frame):
         return total_size
 
     def update_downloaded_size(self):
-        downloads_dir = Path.home() / "Downloads" / "Discogs"
+        # [UPDATED]
+        downloads_dir = Path(self.download_dir_var.get())
+        if not downloads_dir.exists():
+            self.downloaded_size_var.set("→ 0 MB")
+            return
         size_in_bytes = self.get_folder_size(downloads_dir)
         one_gb = 1024 ** 3
         if size_in_bytes >= one_gb:
@@ -1368,7 +1422,8 @@ class DiscogsDownloaderUI(ttk.Frame):
             self.downloaded_size_var.set(f"→ {size_in_mb} MB")
 
     def open_discogs_folder(self):
-        downloads_dir = Path.home() / "Downloads" / "Discogs"
+        # [UPDATED]
+        downloads_dir = Path(self.download_dir_var.get())
         if not downloads_dir.exists():
             self.log_to_console(f"{downloads_dir} folder not found!", "ERROR")
             messagebox.showerror("Error", f"{downloads_dir} folder not found!")
@@ -1386,7 +1441,8 @@ class DiscogsDownloaderUI(ttk.Frame):
 
     def save_to_file(self):
         try:
-            downloads_dir = Path.home() / "Downloads" / "Discogs"
+            # [UPDATED]
+            downloads_dir = Path(self.download_dir_var.get())
             downloads_dir.mkdir(parents=True, exist_ok=True)
             file_path = downloads_dir / "discogs_data.csv"
             self.data_df.to_csv(file_path, sep="\t", index=False)
