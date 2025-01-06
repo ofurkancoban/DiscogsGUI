@@ -1,0 +1,332 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="372a4c94-4702-486a-b841-a2b203c1189d" name="Changes" comment="Info button added.">
+      <change beforePath="$PROJECT_DIR$/GUI/assets/avatar.png" beforeDir="false" afterPath="$PROJECT_DIR$/GUI/assets/avatar.png" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/GUI/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/GUI/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/GUI/test.py" beforeDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="HTML File" />
+        <option value="Python Script" />
+      </list>
+    </option>
+  </component>
+  <component name="FlaskConsoleOptions" custom-start-script="import sys&#10;sys.path.extend([WORKING_DIR_AND_PYTHON_PATHS])&#10;from flask.cli import ScriptInfo&#10;locals().update(ScriptInfo(create_app=None).load_app().make_shell_context())&#10;print(&quot;Python %s on %s\nApp: %s [%s]\nInstance: %s&quot; % (sys.version, sys.platform, app.import_name, app.env, app.instance_path))">
+    <envs>
+      <env key="FLASK_APP" value="app" />
+    </envs>
+    <option name="myCustomStartScript" value="import sys&#10;sys.path.extend([WORKING_DIR_AND_PYTHON_PATHS])&#10;from flask.cli import ScriptInfo&#10;locals().update(ScriptInfo(create_app=None).load_app().make_shell_context())&#10;print(&quot;Python %s on %s\nApp: %s [%s]\nInstance: %s&quot; % (sys.version, sys.platform, app.import_name, app.env, app.instance_path))" />
+    <option name="myEnvs">
+      <map>
+        <entry key="FLASK_APP" value="app" />
+      </map>
+    </option>
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+    <option name="UPDATE_TYPE" value="REBASE" />
+  </component>
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;ofurkancoban&quot;
+  }
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://github.com/ofurkancoban/DiscogsGUI.git&quot;,
+    &quot;accountId&quot;: &quot;e7b61c76-d2e2-4104-a549-f561605449d1&quot;
+  }
+}</component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 6
+}</component>
+  <component name="ProjectId" id="2phrPhZvN1VKobnMyoSoeDBGjSw" />
+  <component name="ProjectLevelVcsManager" settingsEditedManually="true" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;DefaultHtmlFileTemplate&quot;: &quot;HTML File&quot;,
+    &quot;Python.Test.executor&quot;: &quot;Run&quot;,
+    &quot;Python.app.executor&quot;: &quot;Run&quot;,
+    &quot;Python.back_me_up.executor&quot;: &quot;Run&quot;,
+    &quot;Python.code.executor&quot;: &quot;Run&quot;,
+    &quot;Python.discogs_xmlchunker_eng.executor&quot;: &quot;Run&quot;,
+    &quot;Python.ess.executor&quot;: &quot;Run&quot;,
+    &quot;Python.flask.executor&quot;: &quot;Run&quot;,
+    &quot;Python.frontend.executor&quot;: &quot;Run&quot;,
+    &quot;Python.gui.executor&quot;: &quot;Run&quot;,
+    &quot;Python.hedef.executor&quot;: &quot;Run&quot;,
+    &quot;Python.main.executor&quot;: &quot;Run&quot;,
+    &quot;Python.new.executor&quot;: &quot;Run&quot;,
+    &quot;Python.scrapper.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test2.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test3.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test4.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test5.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
+    &quot;last_opened_file_path&quot;: &quot;/Users/ofurkancoban/Desktop/Data Projects/DiscogsGUI/GUI/assets&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;preferences.pluginManager&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
+  }
+}</component>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/GUI/assets" />
+      <recent name="$PROJECT_DIR$/GUI" />
+      <recent name="$PROJECT_DIR$/frontend" />
+    </key>
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/GUI/assets" />
+      <recent name="$PROJECT_DIR$/GUI" />
+      <recent name="$PROJECT_DIR$/scrapper" />
+    </key>
+  </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-js-predefined-1d06a55b98c1-0b3e54e931b4-JavaScript-PY-241.19416.19" />
+        <option value="bundled-python-sdk-337b0a7a993a-2767605e8bc2-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-241.19416.19" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="SpellCheckerSettings" RuntimeDictionaries="0" Folders="0" CustomDictionaries="0" DefaultDictionary="application-level" UseSingleDictionary="true" transferred="true" />
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="372a4c94-4702-486a-b841-a2b203c1189d" name="Changes" comment="" />
+      <created>1733229126093</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1733229126093</updated>
+      <workItem from="1733229127147" duration="17199000" />
+      <workItem from="1733486792164" duration="6368000" />
+      <workItem from="1733685133238" duration="2094000" />
+      <workItem from="1733821291574" duration="27000" />
+      <workItem from="1733821323392" duration="25877000" />
+      <workItem from="1733857521195" duration="13027000" />
+      <workItem from="1733907353492" duration="9058000" />
+      <workItem from="1733958509453" duration="335000" />
+      <workItem from="1734009381705" duration="2014000" />
+      <workItem from="1734014083739" duration="20991000" />
+      <workItem from="1734117746805" duration="15892000" />
+      <workItem from="1734178560003" duration="3593000" />
+      <workItem from="1734289423260" duration="18000" />
+      <workItem from="1734429338776" duration="13692000" />
+      <workItem from="1734613182153" duration="11023000" />
+      <workItem from="1734709978226" duration="44000" />
+      <workItem from="1734710063028" duration="154000" />
+      <workItem from="1734710230150" duration="3753000" />
+      <workItem from="1734777768224" duration="23000" />
+      <workItem from="1734777796446" duration="3860000" />
+      <workItem from="1734781952356" duration="13859000" />
+      <workItem from="1735581090385" duration="8093000" />
+      <workItem from="1735767872888" duration="11112000" />
+      <workItem from="1735783571812" duration="4240000" />
+      <workItem from="1735899648228" duration="17923000" />
+    </task>
+    <task id="LOCAL-00001" summary="First commit">
+      <option name="closed" value="true" />
+      <created>1733845713530</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1733845713530</updated>
+    </task>
+    <task id="LOCAL-00002" summary="First commit">
+      <option name="closed" value="true" />
+      <created>1733846484839</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1733846484839</updated>
+    </task>
+    <task id="LOCAL-00003" summary="Updated.">
+      <option name="closed" value="true" />
+      <created>1733875330843</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1733875330843</updated>
+    </task>
+    <task id="LOCAL-00004" summary="Updated.">
+      <option name="closed" value="true" />
+      <created>1733909163608</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1733909163608</updated>
+    </task>
+    <task id="LOCAL-00005" summary="UI Updated. Some bugs are fixed.">
+      <option name="closed" value="true" />
+      <created>1734129738363</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1734129738363</updated>
+    </task>
+    <task id="LOCAL-00006" summary="Delete button added.">
+      <option name="closed" value="true" />
+      <created>1734432643977</created>
+      <option name="number" value="00006" />
+      <option name="presentableId" value="LOCAL-00006" />
+      <option name="project" value="LOCAL" />
+      <updated>1734432643977</updated>
+    </task>
+    <task id="LOCAL-00007" summary="Delete button added.">
+      <option name="closed" value="true" />
+      <created>1734432656139</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1734432656139</updated>
+    </task>
+    <task id="LOCAL-00008" summary="Download folder path bug fixed">
+      <option name="closed" value="true" />
+      <created>1734613585769</created>
+      <option name="number" value="00008" />
+      <option name="presentableId" value="LOCAL-00008" />
+      <option name="project" value="LOCAL" />
+      <updated>1734613585769</updated>
+    </task>
+    <task id="LOCAL-00009" summary="Download folder size indicator is added.&#10;Resizing is disabled.">
+      <option name="closed" value="true" />
+      <created>1734701721937</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1734701721937</updated>
+    </task>
+    <task id="LOCAL-00010" summary="parallel_download() has been added to handle multi-segment downloading.">
+      <option name="closed" value="true" />
+      <created>1734704707084</created>
+      <option name="number" value="00010" />
+      <option name="presentableId" value="LOCAL-00010" />
+      <option name="project" value="LOCAL" />
+      <updated>1734704707084</updated>
+    </task>
+    <task id="LOCAL-00011" summary="A lot of improvements have done.">
+      <option name="closed" value="true" />
+      <created>1734815520477</created>
+      <option name="number" value="00011" />
+      <option name="presentableId" value="LOCAL-00011" />
+      <option name="project" value="LOCAL" />
+      <updated>1734815520477</updated>
+    </task>
+    <task id="LOCAL-00012" summary="A lot of improvements have done.">
+      <option name="closed" value="true" />
+      <created>1735594398810</created>
+      <option name="number" value="00012" />
+      <option name="presentableId" value="LOCAL-00012" />
+      <option name="project" value="LOCAL" />
+      <updated>1735594398810</updated>
+    </task>
+    <task id="LOCAL-00013" summary="A lot of improvements have done.">
+      <option name="closed" value="true" />
+      <created>1735772568078</created>
+      <option name="number" value="00013" />
+      <option name="presentableId" value="LOCAL-00013" />
+      <option name="project" value="LOCAL" />
+      <updated>1735772568079</updated>
+    </task>
+    <task id="LOCAL-00014" summary="GUI updated.">
+      <option name="closed" value="true" />
+      <created>1735818414371</created>
+      <option name="number" value="00014" />
+      <option name="presentableId" value="LOCAL-00014" />
+      <option name="project" value="LOCAL" />
+      <updated>1735818414371</updated>
+    </task>
+    <task id="LOCAL-00015" summary="Works well. Ready to release but needs more updates.">
+      <option name="closed" value="true" />
+      <created>1735938053027</created>
+      <option name="number" value="00015" />
+      <option name="presentableId" value="LOCAL-00015" />
+      <option name="project" value="LOCAL" />
+      <updated>1735938053027</updated>
+    </task>
+    <task id="LOCAL-00016" summary="Settings updated.">
+      <option name="closed" value="true" />
+      <created>1735944081940</created>
+      <option name="number" value="00016" />
+      <option name="presentableId" value="LOCAL-00016" />
+      <option name="project" value="LOCAL" />
+      <updated>1735944081940</updated>
+    </task>
+    <task id="LOCAL-00017" summary="Info button added.">
+      <option name="closed" value="true" />
+      <created>1735945506708</created>
+      <option name="number" value="00017" />
+      <option name="presentableId" value="LOCAL-00017" />
+      <option name="project" value="LOCAL" />
+      <updated>1735945506708</updated>
+    </task>
+    <task id="LOCAL-00018" summary="Info button added.">
+      <option name="closed" value="true" />
+      <created>1736110830122</created>
+      <option name="number" value="00018" />
+      <option name="presentableId" value="LOCAL-00018" />
+      <option name="project" value="LOCAL" />
+      <updated>1736110830122</updated>
+    </task>
+    <option name="localTasksCounter" value="19" />
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="First commit" />
+    <MESSAGE value="Updated." />
+    <MESSAGE value="UI Updated. Some bugs are fixed." />
+    <MESSAGE value="Delete button added." />
+    <MESSAGE value="Download folder path bug fixed" />
+    <MESSAGE value="Download folder size indicator is added.&#10;Resizing is disabled." />
+    <MESSAGE value="parallel_download() has been added to handle multi-segment downloading." />
+    <MESSAGE value="A lot of improvements have done." />
+    <MESSAGE value="GUI updated." />
+    <MESSAGE value="Works well. Ready to release but needs more updates." />
+    <MESSAGE value="Settings updated." />
+    <MESSAGE value="Info button added." />
+    <option name="LAST_COMMIT_MESSAGE" value="Info button added." />
+  </component>
+  <component name="com.intellij.coverage.CoverageDataManagerImpl">
+    <SUITE FILE_PATH="coverage/DiscogsGUI$test2.coverage" NAME="test2 Coverage Results" MODIFIED="1733254431645" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/DiscogsGUI$flask.coverage" NAME="main Coverage Results" MODIFIED="1733487112833" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/flask" />
+    <SUITE FILE_PATH="coverage/DiscogsGUI$test5.coverage" NAME="test5 Coverage Results" MODIFIED="1733257503287" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/DiscogsGUI$hedef.coverage" NAME="hedef Coverage Results" MODIFIED="1734099097352" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/GUI" />
+    <SUITE FILE_PATH="coverage/DiscogsGUI$frontend.coverage" NAME="frontend Coverage Results" MODIFIED="1733847530722" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/frontend" />
+    <SUITE FILE_PATH="coverage/DiscogsGUI$test3.coverage" NAME="test3 Coverage Results" MODIFIED="1733254293169" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/DiscogsGUI$scrapper.coverage" NAME="scrapper Coverage Results" MODIFIED="1733822157189" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/scrapper" />
+    <SUITE FILE_PATH="coverage/DiscogsGUI$gui.coverage" NAME="gui Coverage Results" MODIFIED="1734098726173" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/GUI" />
+    <SUITE FILE_PATH="coverage/DiscogsGUI$test.coverage" NAME="test Coverage Results" MODIFIED="1735945463468" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/GUI" />
+    <SUITE FILE_PATH="coverage/DiscogsGUI$Test.coverage" NAME="Test Coverage Results" MODIFIED="1733251391965" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/DiscogsGUI$ess.coverage" NAME="ess Coverage Results" MODIFIED="1735581093600" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/DiscogsGUI$new.coverage" NAME="new Coverage Results" MODIFIED="1735772092337" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/scrapper" />
+    <SUITE FILE_PATH="coverage/DiscogsGUI$code.coverage" NAME="code Coverage Results" MODIFIED="1735771049294" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/GUI" />
+    <SUITE FILE_PATH="coverage/DiscogsGUI$discogs_xmlchunker_eng.coverage" NAME="discogs_xmlchunker_eng Coverage Results" MODIFIED="1735582424658" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/../Discogs Project" />
+    <SUITE FILE_PATH="coverage/DiscogsGUI$test4.coverage" NAME="test4 Coverage Results" MODIFIED="1733255250148" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/DiscogsGUI$main.coverage" NAME="main Coverage Results" MODIFIED="1736155670383" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/GUI" />
+    <SUITE FILE_PATH="coverage/DiscogsGUI$back_me_up.coverage" NAME="back_me_up Coverage Results" MODIFIED="1734098951410" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/GUI" />
+  </component>
+</project>

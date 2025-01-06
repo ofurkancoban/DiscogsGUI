@@ -15,7 +15,7 @@ import webbrowser  # <-- for opening social media links
 import re
 import csv
 
-# [UPDATED] Yeni import: Klasör seçme dialogu için
+# [UPDATED] New import: Folder selection dialog
 from tkinter import filedialog
 
 import ttkbootstrap as ttk
@@ -24,6 +24,7 @@ from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from tkinter import messagebox
 from tkinter.scrolledtext import ScrolledText
+from tkinter import StringVar  # Import StringVar
 
 ###############################################################################
 #                          File-Type → XML Tag Mapping
@@ -172,15 +173,15 @@ def chunk_xml_by_type(xml_file_path: Path, content_type: str, records_per_file: 
 ###############################################################################
 def update_columns_from_chunk(chunk_file_path: Path, all_columns: set, record_tag: str):
     """
-    1. Pass: Chunk dosyasını satır satır parse eder.
-       - Tespit ettiği tag/attrib isimlerini 'all_columns' setine ekler.
-       - Bellekte kayıt tutulmaz.
+    1. Pass: Parse the chunk file line by line.
+       - Add discovered tag/attribute names to the 'all_columns' set.
+       - No data is stored in memory.
     """
     current_path = []
     for event, elem in ET.iterparse(str(chunk_file_path), events=("start", "end")):
         if event == "start":
             current_path.append(elem.tag)
-            # Atribütleri keşfet
+            # Discover attributes
             for attr, value in elem.attrib.items():
                 if len(current_path) > 1:
                     tag_name = f"{'_'.join(current_path[-2:])}_{attr}"
@@ -196,7 +197,7 @@ def update_columns_from_chunk(chunk_file_path: Path, all_columns: set, record_ta
                 all_columns.add(tag_name)
 
             if elem.tag == record_tag:
-                # record ended, do nothing except ensure we clear
+                # Record ended, do nothing except ensure we clear
                 pass
 
             current_path.pop()
@@ -205,9 +206,8 @@ def update_columns_from_chunk(chunk_file_path: Path, all_columns: set, record_ta
 
 def write_chunk_to_csv(chunk_file_path: Path, csv_writer: csv.DictWriter, all_columns: list, record_tag: str):
     """
-    2. Pass: Chunk dosyasını yine satır satır parse eder.
-             Her bir <record_tag>...</record_tag> kaydı tamamlandığında
-             CSV'ye tek satır yazar.
+    2. Pass: Parse the chunk file line by line.
+             For each <record_tag>...</record_tag> record, write a single row to the CSV.
     """
     current_path = []
     record_data = {}
@@ -215,7 +215,7 @@ def write_chunk_to_csv(chunk_file_path: Path, csv_writer: csv.DictWriter, all_co
     for event, elem in ET.iterparse(str(chunk_file_path), events=("start", "end")):
         if event == "start":
             current_path.append(elem.tag)
-            # Atribütleri kayda al
+            # Save attributes
             for attr, value in elem.attrib.items():
                 if len(current_path) > 1:
                     tag_name = f"{'_'.join(current_path[-2:])}_{attr}"
@@ -232,7 +232,7 @@ def write_chunk_to_csv(chunk_file_path: Path, csv_writer: csv.DictWriter, all_co
                 record_data[tag_name] = elem.text.strip()
 
             if elem.tag == record_tag:
-                # Bir kayıt tamamlandı, CSV'ye yazalım
+                # Record completed, write to CSV
                 row_to_write = {}
                 for col in all_columns:
                     row_to_write[col] = record_data.get(col, None)
@@ -245,23 +245,23 @@ def write_chunk_to_csv(chunk_file_path: Path, csv_writer: csv.DictWriter, all_co
 
 def convert_chunked_files_to_csv(chunk_folder: Path, output_csv: Path, content_type: str):
     """
-    1) Tüm chunk dosyalarının kolonlarını keşfet (all_columns)  [PASS 1]
-    2) Bulunan kolonlarla tek CSV'ye hepsini sırayla yaz.        [PASS 2]
+    1) Discover all columns from chunk files [PASS 1]
+    2) Write all data to a single CSV with discovered columns [PASS 2]
     """
-    record_tag = content_type[:-1]  # e.g. "releases" -> "release"
+    record_tag = content_type[:-1]  # e.g., "releases" -> "release"
     chunk_files = sorted(chunk_folder.glob("chunk_*.xml"))
     if not chunk_files:
         print(f"[WARNING] No chunk_*.xml files found in {chunk_folder}")
         return
 
-    # 1) PASS: Kolonları topla
+    # 1) PASS: Discover columns
     all_columns = set()
     for cf in chunk_files:
         update_columns_from_chunk(cf, all_columns, record_tag=record_tag)
 
-    all_columns = sorted(all_columns)  # sabit kolon sırası
+    all_columns = sorted(all_columns)  # Fixed column order
 
-    # 2) PASS: Tek CSV'ye yaz
+    # 2) PASS: Write to CSV
     with open(output_csv, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=all_columns)
         writer.writeheader()
@@ -276,7 +276,7 @@ def convert_chunked_files_to_csv(chunk_folder: Path, output_csv: Path, content_t
 #                             S3 + UI + Main Logic
 ###############################################################################
 
-# [UPDATED] Simgelerin bulunduğu assets klasörü için PATH
+# [UPDATED] Path to the assets folder
 PATH = Path(__file__).parent / 'assets'
 
 
@@ -362,10 +362,14 @@ class CollapsingFrame(ttk.Frame):
         super().__init__(master, **kwargs)
         self.columnconfigure(0, weight=1)
         self.cumulative_rows = 0
-        self.images = [
-            ttk.PhotoImage(file=PATH / 'icons8-double-up-30.png'),
-            ttk.PhotoImage(file=PATH / 'icons8-double-right-30.png')
-        ]
+        try:
+            self.images = [
+                ttk.PhotoImage(file=PATH / 'icons8-double-up-30.png'),
+                ttk.PhotoImage(file=PATH / 'icons8-double-right-30.png')
+            ]
+        except Exception as e:
+            print(f"[ERROR] Failed to load collapsing frame images: {e}")
+            self.images = [None, None]
 
     def add(self, child, title="", bootstyle=PRIMARY, **kwargs):
         if child.winfo_class() != 'TFrame':
@@ -380,7 +384,10 @@ class CollapsingFrame(ttk.Frame):
         def _func(c=child):
             return self._toggle_open_close(c)
 
-        btn = ttk.Button(master=frm, image=self.images[0], bootstyle=bootstyle, command=_func)
+        if self.images[0] and self.images[1]:
+            btn = ttk.Button(master=frm, image=self.images[0], bootstyle=bootstyle, command=_func)
+        else:
+            btn = ttk.Button(master=frm, text='Toggle', bootstyle=bootstyle, command=_func)
         btn.pack(side=RIGHT)
         child.btn = btn
         child.grid(row=self.cumulative_rows + 1, column=0, sticky=NSEW)
@@ -389,33 +396,47 @@ class CollapsingFrame(ttk.Frame):
     def _toggle_open_close(self, child):
         if child.winfo_viewable():
             child.grid_remove()
-            child.btn.configure(image=self.images[1])
+            if self.images[1]:
+                child.btn.configure(image=self.images[1])
+            else:
+                child.btn.configure(text='Expand')
         else:
             child.grid()
-            child.btn.configure(image=self.images[0])
+            if self.images[0]:
+                child.btn.configure(image=self.images[0])
+            else:
+                child.btn.configure(text='Collapse')
 
 
-class DiscogsDownloaderUI(ttk.Frame):
+class DiscogsDataProcessorUI(ttk.Frame):
     def __init__(self, master, data_df, **kwargs):
         super().__init__(master, **kwargs)
         self.pack(fill=BOTH, expand=YES)
         self.data_df = data_df
         self.stop_flag = False
 
-        # [UPDATED] Yeni değişken: İndirme klasörü (varsayılan: ~/Downloads/Discogs)
+        # [UPDATED] New variable: Download folder (default: ~/Downloads/Discogs)
         default_download_dir = Path.home() / "Downloads" / "Discogs"
-        self.download_dir_var = ttk.StringVar(value=str(default_download_dir))
+        self.download_dir_var = StringVar(value=str(default_download_dir))  # Use StringVar
+
+        # Initialize StringVar variables for status
+        self.prog_message_var = StringVar(value='Idle...')
+        self.prog_speed_var = StringVar(value='Speed: 0.00 MB/s')
+        self.prog_time_started_var = StringVar(value='Not started')
+        self.prog_time_elapsed_var = StringVar(value='Elapsed: 0 sec')
+        self.prog_time_left_var = StringVar(value='Left: 0 sec')
+        self.scroll_message_var = StringVar(value='Log: Ready.')
 
         # For checkboxes in table
         self.check_vars = {}
         self.checkbuttons = {}
 
         #######################################################################
-        # 1) Tüm resimleri eski usül yüklemek için sözlük + self.photoimages
+        # 1) Load all images in a dictionary + self.photoimages
         #######################################################################
         image_files = {
             'settings': 'icons8-settings-30.png',
-            'info': 'icons8-info-30.png',  # [UPDATED] Info simgesi eklendi
+            'info': 'icons8-info-30.png',  # [UPDATED] Info icon added
             'download': 'icons8-download-30.png',
             'stop': 'icons8-cancel-30.png',
             'refresh': 'icons8-refresh-30.png',
@@ -431,12 +452,15 @@ class DiscogsDownloaderUI(ttk.Frame):
             'avatar': 'avatar.png'
         }
 
-        self.photoimages = []
+        self.photoimages = {}
         imgpath = Path(__file__).parent / 'assets'
         for key, val in image_files.items():
             _path = imgpath / val
             if _path.exists():
-                self.photoimages.append(ttk.PhotoImage(name=key, file=_path))
+                try:
+                    self.photoimages[key] = ttk.PhotoImage(name=key, file=_path)
+                except Exception as e:
+                    print(f"[ERROR] Failed to load image {key}: {e}")
             else:
                 print(f"[WARNING] Image file not found: {_path}")
 
@@ -446,52 +470,57 @@ class DiscogsDownloaderUI(ttk.Frame):
         top_banner_frame = ttk.Frame(self)
         top_banner_frame.pack(side=TOP, fill=X)
 
-        # Discogs logo solda
-        banner = ttk.Label(top_banner_frame, image='logo')
-        banner.pack(side=LEFT, padx=10, pady=5)
+        # Discogs logo on the left
+        if 'logo' in self.photoimages:
+            banner = ttk.Label(top_banner_frame, image='logo')
+            banner.pack(side=LEFT, padx=10, pady=5)
+        else:
+            banner = ttk.Label(top_banner_frame, text="Discogs Data Processor", font=("Arial", 16, "bold"))
+            banner.pack(side=LEFT, padx=10, pady=5)
 
-        # Sosyal ikonlar sağda
+        # Social media icons on the right
         social_frame = ttk.Frame(top_banner_frame)
         social_frame.pack(side=RIGHT, padx=10, pady=5)
 
-        btn_linkedin = ttk.Button(
-            social_frame,
-            image='linkedin',
-            bootstyle=LINK,
-            command=lambda: self.open_url("https://www.linkedin.com/in/ofurkancoban/")
-        )
-        btn_linkedin.pack(side=LEFT, padx=2)
+        if 'linkedin' in self.photoimages:
+            btn_linkedin = ttk.Button(
+                social_frame,
+                image='linkedin',
+                bootstyle=LINK,
+                command=lambda: self.open_url("https://www.linkedin.com/in/ofurkancoban/")
+            )
+            btn_linkedin.pack(side=LEFT, padx=2)
 
-        btn_github = ttk.Button(
-            social_frame,
-            image='github',
-            bootstyle=LINK,
-            command=lambda: self.open_url("https://github.com/ofurkancoban")
-        )
-        btn_github.pack(side=LEFT, padx=2)
+        if 'github' in self.photoimages:
+            btn_github = ttk.Button(
+                social_frame,
+                image='github',
+                bootstyle=LINK,
+                command=lambda: self.open_url("https://github.com/ofurkancoban")
+            )
+            btn_github.pack(side=LEFT, padx=2)
 
-        btn_kaggle = ttk.Button(
-            social_frame,
-            image='kaggle',
-            bootstyle=LINK,
-            command=lambda: self.open_url("https://www.kaggle.com/ofurkancoban")
-        )
-        btn_kaggle.pack(side=LEFT, padx=2)
+        if 'kaggle' in self.photoimages:
+            btn_kaggle = ttk.Button(
+                social_frame,
+                image='kaggle',
+                bootstyle=LINK,
+                command=lambda: self.open_url("https://www.kaggle.com/ofurkancoban")
+            )
+            btn_kaggle.pack(side=LEFT, padx=2)
 
         #######################################################################
-        # ÜST BUTON BAR
+        # TOP BUTTON BAR
         #######################################################################
         buttonbar = ttk.Frame(self, style='primary.TFrame')
         buttonbar.pack(fill=X, pady=1, side=TOP)
-        self.setvar('scroll-message', 'Log: Ready.')
+        self.scroll_message_var.set('Log: Ready.')
 
         # 1. Fetch Data
         btn = ttk.Button(buttonbar, text='Fetch Data', image='fetch', compound=TOP, command=self.start_scraping)
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
-        # 2. Refresh
-        btn = ttk.Button(buttonbar, text='Refresh', image='refresh', compound=TOP, command=self.refresh_data)
-        btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
+        # [REMOVED] 2. Refresh Button and Functionality
 
         # 3. Download
         btn = ttk.Button(buttonbar, text='Download', image='download', compound=TOP, command=self.download_selected)
@@ -509,28 +538,28 @@ class DiscogsDownloaderUI(ttk.Frame):
         btn = ttk.Button(buttonbar, text='Delete', image='delete', compound=TOP, command=self.delete_selected)
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
-        # [UPDATED] 7. Settings - Komut değiştirildi ve Fetch Data tetiklendi
+        # [UPDATED] 7. Settings - Command changed and Fetch Data triggered
         btn = ttk.Button(
             buttonbar,
             text='Settings',
             image='settings',
             compound=TOP,
-            command=self.open_settings  # Ayarlar penceresi
+            command=self.open_settings  # Settings window
         )
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
-        # [UPDATED] 8. Info Butonu Eklendi
+        # [UPDATED] 8. Info Button Added
         btn = ttk.Button(
             buttonbar,
             text='Info',
-            image='info',  # Info simgesi eklendi
+            image='info',  # Info icon added
             compound=TOP,
-            command=self.open_info  # Info popup açacak metod
+            command=self.open_info  # Method to open Info popup
         )
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
         #######################################################################
-        # SOL PANEL
+        # LEFT PANEL
         #######################################################################
         left_panel = ttk.Frame(self, style='bg.TFrame', width=250)
         left_panel.pack(side=LEFT, fill=Y)
@@ -546,14 +575,14 @@ class DiscogsDownloaderUI(ttk.Frame):
         lbl = ttk.Label(ds_frm, text='Download Folder:')
         lbl.grid(row=0, column=0, sticky=W, pady=2)
 
-        # [UPDATED] Klasör etiketini self.download_dir_var ile eşleştir
+        # [UPDATED] Link the folder label to self.download_dir_var
         self.download_folder_label = ttk.Label(ds_frm, textvariable=self.download_dir_var)
         self.download_folder_label.grid(row=1, column=0, sticky=W, padx=0, pady=2)
 
         lbl = ttk.Label(ds_frm, text='Size of Downloaded Files:')
         lbl.grid(row=2, column=0, sticky=W, pady=2)
 
-        self.downloaded_size_var = ttk.StringVar(value="Calculating...")
+        self.downloaded_size_var = StringVar(value="Calculating...")
         lbl = ttk.Label(ds_frm, textvariable=self.downloaded_size_var)
         lbl.grid(row=3, column=0, sticky=W, padx=0, pady=2)
 
@@ -576,30 +605,30 @@ class DiscogsDownloaderUI(ttk.Frame):
         status_frm.columnconfigure(1, weight=1)
         status_cf.add(child=status_frm, title='Status', bootstyle=SECONDARY)
 
-        lbl = ttk.Label(status_frm, textvariable='prog-message', font='Arial 10 bold')
+        lbl = ttk.Label(status_frm, textvariable=self.prog_message_var, font='Arial 10 bold')
         lbl.grid(row=0, column=0, columnspan=2, sticky=W)
-        self.setvar('prog-message', 'Idle...')
+        self.prog_message_var.set('Idle...')
 
         pb = ttk.Progressbar(status_frm, length=200, mode="determinate", bootstyle=SUCCESS)
         pb.grid(row=1, column=0, columnspan=2, sticky=EW, pady=(5, 5))
         self.pb = pb
         self.pb["value"] = 0
 
-        lbl = ttk.Label(status_frm, textvariable='prog-time-started')
+        lbl = ttk.Label(status_frm, textvariable=self.prog_time_started_var)
         lbl.grid(row=2, column=0, columnspan=2, sticky=EW, pady=2)
-        self.setvar('prog-time-started', 'Not started')
+        self.prog_time_started_var.set('Not started')
 
-        lbl = ttk.Label(status_frm, textvariable='prog-speed')
+        lbl = ttk.Label(status_frm, textvariable=self.prog_speed_var)
         lbl.grid(row=3, column=0, columnspan=2, sticky=EW, pady=2)
-        self.setvar('prog-speed', 'Speed: 0.00 MB/s')
+        self.prog_speed_var.set('Speed: 0.00 MB/s')
 
-        lbl = ttk.Label(status_frm, textvariable='prog-time-elapsed')
+        lbl = ttk.Label(status_frm, textvariable=self.prog_time_elapsed_var)
         lbl.grid(row=4, column=0, columnspan=2, sticky=EW, pady=2)
-        self.setvar('prog-time-elapsed', 'Elapsed: 0 sec')
+        self.prog_time_elapsed_var.set('Elapsed: 0 sec')
 
-        lbl = ttk.Label(status_frm, textvariable='prog-time-left')
+        lbl = ttk.Label(status_frm, textvariable=self.prog_time_left_var)
         lbl.grid(row=5, column=0, columnspan=2, sticky=EW, pady=2)
-        self.setvar('prog-time-left', 'Left: 0 sec')
+        self.prog_time_left_var.set('Left: 0 sec')
 
         sep = ttk.Separator(status_frm, bootstyle=SECONDARY)
         sep.grid(row=6, column=0, columnspan=2, pady=5, sticky=EW)
@@ -610,12 +639,15 @@ class DiscogsDownloaderUI(ttk.Frame):
         sep = ttk.Separator(status_frm, bootstyle=SECONDARY)
         sep.grid(row=8, column=0, columnspan=2, pady=5, sticky=EW)
 
-        # Soldaki panelin en altına, ortalı olacak şekilde avatar resmi yerleştiriyoruz
-        lbl = ttk.Label(left_panel, image='avatar', style='bg.TLabel')
+        # Add avatar image or placeholder at the bottom of the left panel
+        if 'avatar' in self.photoimages:
+            lbl = ttk.Label(left_panel, image='avatar', style='bg.TLabel')
+        else:
+            lbl = ttk.Label(left_panel, text="Avatar", style='bg.TLabel')
         lbl.pack(side='top', anchor='center', pady=0)
 
         #######################################################################
-        # SAĞ PANEL
+        # RIGHT PANEL
         #######################################################################
         right_panel = ttk.Frame(self, padding=(2, 0))
         right_panel.pack(side=RIGHT, fill=BOTH, expand=NO)
@@ -662,22 +694,28 @@ class DiscogsDownloaderUI(ttk.Frame):
 
         output_container = ttk.Frame(scroll_cf, padding=0)
         _value = 'Log: Ready.'
-        self.setvar('scroll-message', _value)
+        self.scroll_message_var.set(_value)
 
         console_frame = ttk.Frame(output_container)
         console_frame.pack(fill=BOTH, expand=NO)
         console_frame.columnconfigure(0, weight=1)
         console_frame.rowconfigure(0, weight=1)
 
+        # Create Text widget
         st = ttk.Text(console_frame, wrap='word', state='disabled', height=15)
         st.grid(row=0, column=0, sticky='nsew')
+
+        # Create ttk Scrollbar
+        console_scrollbar = ttk.Scrollbar(console_frame, orient='vertical', command=st.yview,
+                                          style='Vertical.TScrollbar')
+        console_scrollbar.grid(row=0, column=1, sticky='ns')
+
+        # Configure Text widget to use the scrollbar
+        st.configure(yscrollcommand=console_scrollbar.set)
+
         self.console_text = st
 
-        console_vsb = ttk.Scrollbar(console_frame, orient='vertical', command=st.yview)
-        console_vsb.grid(row=0, column=1, sticky='ns')
-        st.configure(yscrollcommand=console_vsb.set)
-
-        scroll_cf.add(output_container, textvariable='scroll-message')
+        scroll_cf.add(output_container, textvariable=self.scroll_message_var)
 
         self.tree = tv
 
@@ -687,19 +725,19 @@ class DiscogsDownloaderUI(ttk.Frame):
         self.tree.bind("<<TreeviewSelect>>", lambda e: self.position_checkbuttons())
         right_panel.bind("<Configure>", lambda e: self.position_checkbuttons())
 
-        self.log_to_console("Welcome to the Discogs Data Downloader", "INFO")
+        self.log_to_console("Welcome to the Discogs Data Processor", "INFO")
         self.log_to_console("The application is fetching data automatically, please wait...", "INFO")
 
         # Start scraping after short delay
         self.after(100, self.start_scraping)
         self.update_downloaded_size()
 
-    # [UPDATED] Yeni metod: Kullanıcının indirme klasörü seçmesi ve Discogs klasörü oluşturulması
-    # Ayrıca Fetch Data otomatik olarak tetikleniyor
-    # Ve Info butonuna tıklanınca bilgi penceresi açılıyor
+    # [UPDATED] New method: Allow user to select download folder and create Discogs folder
+    # Also Fetch Data is triggered automatically
+    # Info button opens a fancy information window
     def open_settings(self):
-        """Kullanıcının indirilecek klasörü seçmesini sağlayan dialog ve Discogs klasörü oluşturur.
-           Ardından Fetch Data işlemini otomatik olarak başlatır."""
+        """Allows the user to select a download folder and creates a Discogs folder.
+           Then automatically starts the Fetch Data process."""
         chosen_dir = filedialog.askdirectory(
             title="Select Download Folder",
             initialdir=self.download_dir_var.get()
@@ -710,24 +748,24 @@ class DiscogsDownloaderUI(ttk.Frame):
                 discogs_dir.mkdir(parents=True, exist_ok=True)
                 self.download_dir_var.set(str(discogs_dir))
                 self.log_to_console(f"Download folder changed to: {discogs_dir}", "INFO")
-                self.update_downloaded_size()  # seçilen klasörün boyutunu göstermek için
+                self.update_downloaded_size()  # Show the size of the selected folder
                 self.log_to_console("Fetching data automatically after changing download folder...", "INFO")
-                self.start_scraping()  # [UPDATED] Fetch Data tetikleme
+                self.start_scraping()  # [UPDATED] Trigger Fetch Data
             except Exception as e:
                 self.log_to_console(f"Error creating Discogs folder: {e}", "ERROR")
                 messagebox.showerror("Error", f"Could not create Discogs folder: {e}")
         else:
             self.log_to_console("No folder selected. Keeping current setting.", "INFO")
 
-    # [UPDATED] Yeni metod: Info butonu için
+    # [UPDATED] New method: For the Info button
     def open_info(self):
-        """Uygulamanın nasıl kullanılacağına dair bilgi penceresini açar."""
+        """Opens a more stylish and clean information window."""
         info_window = ttk.Toplevel(self)
-        info_window.title("How to Use Discogs Data Downloader")
+        info_window.title("How to Use Discogs Data Processor")
         info_window.geometry("600x500")
         info_window.resizable(False, False)
 
-        # Merkezi yerleştirmek için pencereyi ortala
+        # Center the window
         window_width = 600
         window_height = 500
 
@@ -739,82 +777,76 @@ class DiscogsDownloaderUI(ttk.Frame):
 
         info_window.geometry(f'{window_width}x{window_height}+{center_x}+{center_y}')
 
-        # Pencereyi modal yap
+        # Make the window modal
         info_window.grab_set()
 
         # Scrollable text
         text_area = ScrolledText(info_window, wrap='word', state='normal', font=("Arial", 12))
         text_area.pack(fill=BOTH, expand=True, padx=10, pady=10)
 
-        # Bilgi metni
-        info_text = """
-**Discogs Data Downloader Kullanım Kılavuzu**
+        # Define tags for headings and normal text
+        text_area.tag_configure("heading", font=("Arial", 16, "bold"), spacing1=10, spacing3=10)
+        text_area.tag_configure("subheading", font=("Arial", 14, "bold"), spacing1=5, spacing3=5)
+        text_area.tag_configure("normal", font=("Arial", 12), spacing1=2, spacing3=2)
+        text_area.tag_configure("bullet", font=("Arial", 12), lmargin1=25, lmargin2=50)
 
-**Giriş**
-Bu uygulama, Discogs veri setlerini otomatik olarak indirmenize, çıkarmanıza ve CSV formatına dönüştürmenize yardımcı olur. Kullanıcı dostu arayüzü sayesinde işlemleri kolayca yönetebilirsiniz.
+        # Information text without markdown
+        info_text = [
+            ("Discogs Data Processor User Guide\n", "heading"),
+            ("\nIntroduction\n", "subheading"),
+            ("This application helps you automatically download, extract, and convert Discogs datasets to CSV format. With its user-friendly interface, you can easily manage the processes.\n", "normal"),
+            ("\nGetting Started\n", "subheading"),
+            ("1. Download Folder Selection:\n", "normal"),
+            ("   - Click the Settings button to select your download folder.\n", "bullet"),
+            ("   - An automatic Discogs folder is created in the selected folder. All download, extraction, and conversion processes take place under this folder.\n", "bullet"),
+            ("   - By default, the ~/Downloads/Discogs folder is used.\n", "bullet"),
+            ("\n2. Fetch Data:\n", "subheading"),
+            ("   - When the application first opens, it automatically fetches the latest data using the Fetch Data button.\n", "bullet"),
+            ("   - You can also manually fetch data by clicking the Fetch Data button.\n", "bullet"),
+            ("\nButton Functions\n", "subheading"),
+            ("- Fetch Data: Fetches the latest datasets from the Discogs S3 repository and lists them in the interface.\n", "bullet"),
+            ("- Download: Downloads the selected datasets. Downloaded files are saved in the Discogs/Datasets/<month>/ folder.\n", "bullet"),
+            ("- Extract: Extracts the downloaded .gz files and converts them to .xml format.\n", "bullet"),
+            ("- Convert: Converts the extracted .xml files to CSV format. A streaming method is used for large files.\n", "bullet"),
+            ("- Delete: Deletes the selected files from your disk and updates their status to ✖.\n", "bullet"),
+            ("- Settings: Allows you to select your download folder. When the folder is changed, the Fetch Data process is automatically initiated.\n", "bullet"),
+            ("- Info: Displays this user guide.\n", "bullet"),
+            ("\nUsage Steps\n", "subheading"),
+            ("1. Setting the Download Folder:\n", "normal"),
+            ("   - Click the Settings button.\n", "bullet"),
+            ("   - Select a folder of your choice. The application will automatically create a Discogs folder in the selected directory.\n", "bullet"),
+            ("   - After selecting the folder, the Fetch Data process will automatically start.\n", "bullet"),
+            ("\n2. Downloading Data:\n", "subheading"),
+            ("   - Click the Fetch Data button or the application will automatically fetch the latest data when opened.\n", "bullet"),
+            ("   - Select the datasets you want to download from the list in the right panel and click the Download button.\n", "bullet"),
+            ("\n3. Extracting Data:\n", "subheading"),
+            ("   - Select the .gz files you have downloaded and click the Extract button.\n", "bullet"),
+            ("   - Once the extraction is complete, the files will be in .xml format.\n", "bullet"),
+            ("\n4. Converting Data:\n", "subheading"),
+            ("   - Select the .xml files and click the Convert button.\n", "bullet"),
+            ("   - The data will be converted to CSV format and saved as .csv files in the Discogs/Datasets/<month>/ folder.\n", "bullet"),
+            ("\n5. Deleting Files:\n", "subheading"),
+            ("   - To cancel download, extraction, or conversion processes or to delete unnecessary files, select the relevant files and click the Delete button.\n", "bullet"),
+            ("\nStatus Tracking and Logs\n", "subheading"),
+            ("- The Status section in the left panel shows the status of your download and processing operations.\n", "bullet"),
+            ("- The Log console in the right panel provides detailed information about the operations performed by the application.\n", "bullet"),
+            ("\nAdditional Tips\n", "subheading"),
+            ("- Progress Bar: Shows how much the download and processing operations have progressed.\n", "bullet"),
+            ("- Speed and Time Metrics: Provides information such as download speed, elapsed time, and estimated time left.\n", "bullet"),
+            ("- Open Folder: Use the Open Folder button in the left panel to directly open the download folder.\n", "bullet"),
+            ("\nSupport\n", "subheading"),
+            ("- If you encounter any issues, check the messages in the log console or contact the developer via the social media icons available in the top-right corner of the main window.\n", "bullet"),
+            ("\nThank You!\n", "subheading"),
+            ("- Thank you for using our application to access Discogs datasets. Happy working!\n", "bullet")
+        ]
 
-**Başlangıç**
-1. **Download Folder Seçimi:**
-   - **Settings** butonuna tıklayarak indirme klasörünüzü seçebilirsiniz.
-   - Seçtiğiniz klasörde otomatik olarak bir **Discogs** klasörü oluşturulur. Tüm indirme, çıkarma ve dönüştürme işlemleri bu klasör altında gerçekleşir.
-   - Varsayılan olarak `~/Downloads/Discogs` klasörü kullanılır.
+        # Insert text with tags
+        for text, tag in info_text:
+            text_area.insert('end', text, tag)
 
-2. **Fetch Data:**
-   - Uygulama ilk açıldığında otomatik olarak en güncel verileri Fetch Data butonu aracılığıyla çeker.
-   - **Fetch Data** butonuna tıklayarak verileri manuel olarak da çekebilirsiniz.
+        text_area.config(state='disabled')  # Make text read-only
 
-**Butonların İşlevleri**
-- **Fetch Data:** Discogs S3 deposundan en güncel veri setlerini çeker ve arayüzde listeler.
-- **Refresh:** Mevcut veri listesini yeniler ve güncel durumu gösterir.
-- **Download:** Seçili veri setlerini indirir. İndirilen dosyalar `Discogs/Datasets/<month>/` klasörüne kaydedilir.
-- **Extract:** İndirilen `.gz` dosyalarını çıkarır ve `.xml` formatına dönüştürür.
-- **Convert:** Çıkarılmış `.xml` dosyalarını CSV formatına dönüştürür. Büyük dosyalar için akış yöntemi kullanılır.
-- **Delete:** Seçili dosyaları diskinizden siler ve durumunu ✖ olarak günceller.
-- **Settings:** İndirme klasörünüzü seçmenizi sağlar. Klasör değiştirildiğinde otomatik olarak Fetch Data işlemi başlatılır.
-- **Info:** Bu kullanım kılavuzunu görüntüler.
-
-**Kullanım Adımları**
-1. **Download Folder Ayarlama:**
-   - **Settings** butonuna tıklayın.
-   - İstediğiniz bir klasör seçin. Uygulama, seçilen klasörde otomatik olarak bir **Discogs** klasörü oluşturacaktır.
-   - Klasör seçildikten sonra Fetch Data işlemi otomatik olarak başlatılacaktır.
-
-2. **Verileri İndirme:**
-   - **Fetch Data** butonuna tıklayarak veya uygulama açıldığında otomatik olarak en güncel verileri çekin.
-   - Sağ panelde listelenen veri setlerinden indirmek istediğinizleri seçin ve **Download** butonuna tıklayın.
-
-3. **Verileri Çıkarma:**
-   - İndirdiğiniz `.gz` dosyalarını seçin ve **Extract** butonuna tıklayın.
-   - Çıkarma işlemi tamamlandığında dosyalar `.xml` formatında olacaktır.
-
-4. **Verileri Dönüştürme:**
-   - `.xml` dosyalarını seçin ve **Convert** butonuna tıklayın.
-   - Veriler CSV formatına dönüştürülecek ve `Discogs/Datasets/<month>/` klasöründe `.csv` dosyası olarak kaydedilecektir.
-
-5. **Dosyaları Silme:**
-   - İndirme, çıkarma veya dönüştürme işlemlerini iptal etmek veya gereksiz dosyaları silmek için ilgili dosyaları seçin ve **Delete** butonuna tıklayın.
-
-**Durum Takibi ve Loglar**
-- Sol paneldeki **Status** bölümü, indirme ve işleme işlemlerinizin durumunu gösterir.
-- Sağ paneldeki **Log** konsolu, uygulamanın yaptığı işlemler hakkında detaylı bilgi sağlar.
-
-**Ek İpuçları**
-- **Progress Bar:** İndirme ve işleme işlemlerinin ne kadar ilerlediğini gösterir.
-- **Speed ve Time Metrics:** İndirme hızı, geçen süre ve tahmini kalan süre gibi bilgileri sunar.
-- **Open Folder:** İndirme klasörünü doğrudan açmak için sol paneldeki **Open Folder** butonunu kullanabilirsiniz.
-
-**Destek**
-- Herhangi bir sorunla karşılaşırsanız, log konsolundaki mesajları kontrol edin veya geliştirici ile iletişime geçin.
-
-**Teşekkürler!**
-Uygulamamızı kullanarak Discogs veri setlerine erişim sağladığınız için teşekkür ederiz. İyi çalışmalar!
-"""
-
-        # Metni yerleştir ve etiketi düzenle
-        text_area.insert('1.0', info_text)
-        text_area.config(state='disabled')  # Metni sadece okunabilir yap
-
-        # Pencereyi kullanıcı etkileşimine kapat
+        # Close button
         btn_close = ttk.Button(info_window, text="Close", command=info_window.destroy)
         btn_close.pack(pady=10)
 
@@ -823,11 +855,8 @@ Uygulamamızı kullanarak Discogs veri setlerine erişim sağladığınız için
         webbrowser.open_new_tab(url)
 
     def refresh_data(self):
-        if self.data_df.empty:
-            self.log_to_console("No data to refresh. Fetch data first.", "WARNING")
-        else:
-            self.populate_table(self.data_df)
-            self.log_to_console("Data refreshed.", "INFO")
+        # [REMOVED] This method is no longer needed since Refresh button is removed
+        pass
 
     def populate_table(self, data_df):
         for cb in self.checkbuttons.values():
@@ -847,6 +876,7 @@ Uygulamamızı kullanarak Discogs veri setlerine erişim sağladığınız için
         for i, month in enumerate(unique_months):
             color_map[month] = "month1" if i % 2 == 0 else "month2"
 
+        # [UPDATED] Daha önceki renkleri kullanmak için aşağıdaki iki satırı kullanabilirsiniz:
         self.tree.tag_configure("month1", background="#343a40", foreground="#f8f9fa")
         self.tree.tag_configure("month2", background="#495057", foreground="#f8f9fa")
 
@@ -875,7 +905,7 @@ Uygulamamızı kullanarak Discogs veri setlerine erişim sağladığınız için
         self.position_checkbuttons()
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.setvar('lastupdate', f"→ {now}")
+        self.scroll_message_var.set(f"→ {now}")
 
         self.update_downloaded_size()
 
@@ -948,7 +978,7 @@ Uygulamamızı kullanarak Discogs veri setlerine erişim sağladığınız için
                 url = row_data["URL"].values[0]
                 folder_name = row_data["month"].values[0]
                 filename = os.path.basename(url)
-                # [UPDATED] Klasör güncel
+                # [UPDATED] Updated folder path
                 file_path = Path(self.download_dir_var.get()) / "Datasets" / folder_name / filename
 
                 csv_path = file_path.with_suffix('.csv')
@@ -1001,7 +1031,7 @@ Uygulamamızı kullanarak Discogs veri setlerine erişim sağladığınız için
         max_header_length = 80
         if len(message_content) > max_header_length:
             message_content = message_content[:max_header_length] + '...'
-        self.setvar('scroll-message', f"Log: {message_content}")
+        self.scroll_message_var.set(f"Log: {message_content}")
 
     def mark_downloaded_files(self, data_df):
         """Ensure columns 'Downloaded', 'Extracted', 'Processed' exist, defaulting to ✖,
@@ -1010,7 +1040,7 @@ Uygulamamızı kullanarak Discogs veri setlerine erişim sağladığınız için
             if col not in data_df.columns:
                 data_df[col] = "✖"
 
-        # [UPDATED] Yine indirme klasörü
+        # [UPDATED] Download folder path
         downloads_dir = Path(self.download_dir_var.get()) / "Datasets"
         for idx, row in data_df.iterrows():
             folder_name = str(row["month"])
@@ -1086,7 +1116,7 @@ Uygulamamızı kullanarak Discogs veri setlerine erişim sağladığınız için
                 self.log_to_console(f"Error in thread {idx}: {e}", "ERROR")
 
         start_time = datetime.now()
-        self.setvar('prog-time-started', f'Started at: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
+        self.prog_time_started_var.set(f'Started at: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
         threads = []
         for i in range(num_threads):
             start = i * part_size
@@ -1107,20 +1137,20 @@ Uygulamamızı kullanarak Discogs veri setlerine erişim sağladığınız için
             downloaded_size = sum(thread_progress)
             elapsed = (datetime.now() - start_time).total_seconds()
             speed = (downloaded_size / elapsed) / (1024 * 1024) if elapsed > 0 else 0.0
-            self.setvar('prog-speed', f'Speed: {speed:.2f} MB/s')
+            self.prog_speed_var.set(f'Speed: {speed:.2f} MB/s')
             total_percentage = (downloaded_size / total_size) * 100 if total_size > 0 else 0
-            self.setvar('prog-message', f'Downloading {filename}: {total_percentage:.2f}%')
+            self.prog_message_var.set(f'Downloading {filename}: {total_percentage:.2f}%')
             self.pb["maximum"] = total_size
             self.pb["value"] = downloaded_size
             elapsed_minutes = int(elapsed) // 60
             elapsed_seconds = int(elapsed) % 60
-            self.setvar('prog-time-elapsed', f'Elapsed: {elapsed_minutes} min {elapsed_seconds} sec')
+            self.prog_time_elapsed_var.set(f'Elapsed: {elapsed_minutes} min {elapsed_seconds} sec')
             if downloaded_size > 0:
                 rate = downloaded_size / elapsed if elapsed > 0 else 0
                 left = int((total_size - downloaded_size) / rate) if rate > 0 else 0
                 left_minutes = left // 60
                 left_seconds = left % 60
-                self.setvar('prog-time-left', f'Left: {left_minutes} min {left_seconds} sec')
+                self.prog_time_left_var.set(f'Left: {left_minutes} min {left_seconds} sec')
 
         for t in threads:
             t.join()
@@ -1144,7 +1174,7 @@ Uygulamamızı kullanarak Discogs veri setlerine erişim sağladığınız için
     def download_file(self, url, filename, folder_name):
         file_path = None
         try:
-            self.setvar('prog-message', 'Preparing download...')
+            self.prog_message_var.set('Preparing download...')
             head = requests.head(url)
             head.raise_for_status()
             total_size = int(head.headers.get('Content-Length', 0))
@@ -1159,7 +1189,7 @@ Uygulamamızı kullanarak Discogs veri setlerine erişim sağladığınız için
                         if file_path.exists():
                             file_path.unlink()
                             self.log_to_console(f"Incomplete file {file_path} deleted.", "WARNING")
-                        self.setvar('prog-message', 'Idle...')
+                        self.prog_message_var.set('Idle...')
                         return
                     else:
                         self.log_to_console("Parallel download failed, falling back to single-thread.", "WARNING")
@@ -1174,7 +1204,7 @@ Uygulamamızı kullanarak Discogs veri setlerine erişim sağladığınız için
                     self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✖"
                     self.populate_table(self.data_df)
                     self.update_downloaded_size()
-                    self.setvar('prog-message', 'Idle...')
+                    self.prog_message_var.set('Idle...')
             else:
                 self.single_thread_download(url, filename, folder_name)
 
@@ -1199,13 +1229,13 @@ Uygulamamızı kullanarak Discogs veri setlerine erişim sağladığınız için
             self.pb["maximum"] = total_size
 
             start_time = datetime.now()
-            self.setvar('prog-time-started', f'Started at: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
+            self.prog_time_started_var.set(f'Started at: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
             downloaded_size = 0
 
             with open(file_path, "wb") as file:
                 for data in response.iter_content(block_size):
                     if self.stop_flag:
-                        self.setvar('prog-message', 'Idle...')
+                        self.prog_message_var.set('Idle...')
                         self.log_to_console("Operation Stopped", "WARNING")
                         file.close()
                         if file_path.exists():
@@ -1218,8 +1248,8 @@ Uygulamamızı kullanarak Discogs veri setlerine erişim sağladığınız için
                     elapsed = (datetime.now() - start_time).total_seconds()
 
                     speed = (downloaded_size / elapsed) / (1024 * 1024) if elapsed > 0 else 0.0
-                    self.setvar('prog-speed', f'Speed: {speed:.2f} MB/s')
-                    self.setvar('prog-time-elapsed', f'Elapsed: {int(elapsed) // 60} min {int(elapsed) % 60} sec')
+                    self.prog_speed_var.set(f'Speed: {speed:.2f} MB/s')
+                    self.prog_time_elapsed_var.set(f'Elapsed: {int(elapsed) // 60} min {int(elapsed) % 60} sec')
 
                     if total_size > 0 and downloaded_size > 0:
                         percentage = (downloaded_size / total_size) * 100
@@ -1227,11 +1257,11 @@ Uygulamamızı kullanarak Discogs veri setlerine erişim sağladığınız için
                             (total_size - downloaded_size) / (downloaded_size / elapsed)) if downloaded_size > 0 else 0
                         left_minutes = left // 60
                         left_seconds = left % 60
-                        self.setvar('prog-time-left', f'Left: {left_minutes} min {left_seconds} sec')
-                        self.setvar('prog-message', f'Downloading {filename}: {percentage:.2f}%')
-                        self.setvar('current-file-msg', f'Current file: {file_path}')
+                        self.prog_time_left_var.set(f'Left: {left_minutes} min {left_seconds} sec')
+                        self.prog_message_var.set(f'Downloading {filename}: {percentage:.2f}%')
+                        self.scroll_message_var.set(f'Current file: {file_path}')
 
-            self.setvar('prog-message', 'Idle...')
+            self.prog_message_var.set('Idle...')
             self.log_to_console(f"{filename} successfully downloaded: {file_path}", "INFO")
             self.data_df.loc[self.data_df["URL"] == url, "Downloaded"] = "✔"
             self.data_df.loc[self.data_df["URL"] == url, "Extracted"] = "✖"
@@ -1242,11 +1272,11 @@ Uygulamamızı kullanarak Discogs veri setlerine erişim sağladığınız için
         except Exception as e:
             self.log_to_console(f"Error during single-threaded download: {e}", "ERROR")
             if file_path.exists():
-                file_path.unlink()
                 self.log_to_console(f"Incomplete file {file_path} deleted.", "WARNING")
+                file_path.unlink()
 
     def stop_download(self):
-        """Stopped flagı True yapılır ve işlemler durdurulur."""
+        """Sets the stop flag to True to halt operations."""
         self.stop_flag = True
         self.log_to_console("Operation Stopped. Cleaning up...", "WARNING")
 
@@ -1281,14 +1311,14 @@ Uygulamamızı kullanarak Discogs veri setlerine erişim sağladığınız için
                 self.start_download(url, filename, last_modified)
 
     def extract_gz_file_with_progress(self, file_path):
-        self.setvar('prog-message', 'Extracting file...')
+        self.prog_message_var.set('Extracting file...')
         output_path = file_path.with_suffix('')
         total_size = file_path.stat().st_size
         self.pb["value"] = 0
         self.pb["maximum"] = total_size
 
         start_time = datetime.now()
-        self.setvar('prog-time-started', f'Started at: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
+        self.prog_time_started_var.set(f'Started at: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
         extracted_size = 0
         block_size = 1024 * 64
 
@@ -1308,24 +1338,24 @@ Uygulamamızı kullanarak Discogs veri setlerine erişim sağladığınız için
                     else:
                         speed = 0.0
 
-                    self.setvar('prog-speed', f"Extract Speed: {speed:.2f} MB/s")
+                    self.prog_speed_var.set(f"Extract Speed: {speed:.2f} MB/s")
 
                     if total_size > 0:
                         percentage = (extracted_size / total_size) * 100
-                        self.setvar('prog-message', f"Extracting {file_path.name}: {percentage:.2f}%")
+                        self.prog_message_var.set(f"Extracting {file_path.name}: {percentage:.2f}%")
                         elapsed_minutes = int(elapsed) // 60
                         elapsed_seconds = int(elapsed) % 60
-                        self.setvar('prog-time-elapsed', f'Elapsed: {elapsed_minutes} min {elapsed_seconds} sec')
+                        self.prog_time_elapsed_var.set(f'Elapsed: {elapsed_minutes} min {elapsed_seconds} sec')
                         if extracted_size > 0:
                             rate = extracted_size / elapsed if elapsed > 0 else 0
                             left = int((total_size - extracted_size) / rate) if rate > 0 else 0
                             left_minutes = left // 60
                             left_seconds = left % 60
-                            self.setvar('prog-time-left', f'Left: {left_minutes} min {left_seconds} sec')
+                            self.prog_time_left_var.set(f'Left: {left_minutes} min {left_seconds} sec')
                     else:
-                        self.setvar('prog-message', "Extracting...")
+                        self.prog_message_var.set("Extracting...")
 
-            self.setvar('prog-message', 'Idle...')
+            self.prog_message_var.set('Idle...')
             return not self.stop_flag
 
         except Exception as e:
@@ -1334,9 +1364,9 @@ Uygulamamızı kullanarak Discogs veri setlerine erişim sağladığınız için
 
     def extract_selected(self):
         self.log_to_console("Extracting started...", "INFO")
-        self.setvar('prog-message', 'Waiting 5 seconds before extraction...')
+        self.prog_message_var.set('Waiting 5 seconds before extraction...')
         time.sleep(5)
-        self.setvar('prog-message', 'Extracting now...')
+        self.prog_message_var.set('Extracting now...')
 
         extracted_files = []
         failed_files = []
@@ -1463,18 +1493,18 @@ Uygulamamızı kullanarak Discogs veri setlerine erişim sağladığınız için
                 threshold_mb = 512
 
                 if file_size_mb <= threshold_mb:
-                    # Deneyelim, bellek hatası olmazsa iyi.
+                    # Try direct conversion, hoping for no MemoryError
                     self.log_to_console(f"Attempting direct conversion of {extracted_file} (~{file_size_mb:.1f} MB)", "INFO")
                     success = convert_extracted_file_to_csv(extracted_file, combined_csv)
                     if success:
                         self.log_to_console(f"Converted {extracted_file} → {combined_csv}", "INFO")
                         self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✔"
                     else:
-                        # muhtemelen bellek hatası ya da benzer
+                        # Possibly MemoryError or similar
                         self.log_to_console("Direct conversion failed, fallback to streaming approach.", "WARNING")
                         self._streaming_conversion(extracted_file, content_val, combined_csv, url)
                 else:
-                    # Dosya büyük, direkt streaming
+                    # Large file, use streaming
                     self.log_to_console(f"File {extracted_file} is {file_size_mb:.2f} MB. Using streaming approach...", "INFO")
                     self._streaming_conversion(extracted_file, content_val, combined_csv, url)
             else:
@@ -1484,9 +1514,9 @@ Uygulamamızı kullanarak Discogs veri setlerine erişim sağladığınız için
 
     def _streaming_conversion(self, extracted_file, content_type, output_csv, url):
         """
-        Büyük XML'i iterparse tabanlı chunk'la,
-        chunk klasörünü 2-pass approach ile CSV'ye çevir,
-        sonra chunk klasörünü sil.
+        Chunk the large XML using iterparse,
+        convert chunks to CSV using a 2-pass approach,
+        then delete the chunk folder.
         """
         try:
             # 1) Chunk (iterparse)
@@ -1610,14 +1640,16 @@ def main():
     empty_df["Processed"] = "✖"
 
     # Use the "darkly" theme for a dark appearance
-    app = ttk.Window("Discogs Data Downloader", themename="darkly")
+    app = ttk.Window("Discogs Data Processor", themename="darkly")
     primary_color = app.style.colors.primary
 
     # Optionally, if you want Treeview heading text to be white on dark:
     style = ttk.Style()
     style.configure("Treeview.Heading", background=primary_color, foreground="white")
 
-    DiscogsDownloaderUI(app, empty_df)
+    ui = DiscogsDataProcessorUI(app, empty_df)
+    ui.pack(fill=BOTH, expand=True)
+
     window_width = 750
     window_height = 750
 
