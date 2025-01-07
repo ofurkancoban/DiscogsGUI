@@ -520,7 +520,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         btn = ttk.Button(buttonbar, text='Fetch Data', image='fetch', compound=TOP, command=self.start_scraping)
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
-        # [REMOVED] 2. Refresh Button and Functionality
+
 
         # 3. Download
         btn = ttk.Button(buttonbar, text='Download', image='download', compound=TOP, command=self.download_selected)
@@ -782,7 +782,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
         # Scrollable text
         text_area = ScrolledText(info_window, wrap='word', state='normal', font=("Arial", 12))
-        text_area.pack(fill=BOTH, expand=True, padx=10, pady=10)
+        text_area.pack(fill=BOTH, expand=TRUE, padx=10, pady=10)
 
         # Define tags for headings and normal text
         text_area.tag_configure("heading", font=("Arial", 16, "bold"), spacing1=10, spacing3=10)
@@ -853,10 +853,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
     def open_url(self, url):
         """Open a given URL in the default web browser."""
         webbrowser.open_new_tab(url)
-
-    def refresh_data(self):
-        # [REMOVED] This method is no longer needed since Refresh button is removed
-        pass
 
     def populate_table(self, data_df):
         for cb in self.checkbuttons.values():
