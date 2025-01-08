@@ -38,74 +38,6 @@ TAG_MAP = {
 
 
 ###############################################################################
-#                              XML → DataFrame logic
-###############################################################################
-def xml_to_df(xml_path: Path) -> pd.DataFrame:
-    """Convert an XML file to a pandas DataFrame using iterative parsing
-       (non-streaming, might cause MemoryError on huge files)."""
-    data_dict = {}
-    current_path = []
-
-    for event, elem in ET.iterparse(str(xml_path), events=("start", "end")):
-        if event == "start":
-            current_path.append(elem.tag)
-            # handle attributes
-            for attr, value in elem.attrib.items():
-                if len(current_path) > 1:
-                    tag_name = f"{'_'.join(current_path[-2:])}_{attr}"
-                else:
-                    tag_name = f"{elem.tag}_{attr}"
-                if tag_name not in data_dict:
-                    data_dict[tag_name] = []
-                data_dict[tag_name].append(value)
-
-        elif event == "end":
-            if elem.text and not elem.text.isspace():
-                if len(current_path) > 1:
-                    tag_name = '_'.join(current_path[-2:])
-                else:
-                    tag_name = current_path[-1]
-                if tag_name not in data_dict:
-                    data_dict[tag_name] = []
-                data_dict[tag_name].append(elem.text.strip())
-            current_path.pop()
-            elem.clear()
-
-    # If data_dict is empty, return empty
-    if not data_dict:
-        return pd.DataFrame()
-
-    # unify lengths
-    max_len = max(len(lst) for lst in data_dict.values())
-    for key, value in data_dict.items():
-        if len(value) < max_len:
-            data_dict[key] = value + [None] * (max_len - len(value))
-
-    df = pd.DataFrame(data_dict)
-    return df
-
-
-###############################################################################
-#                            Helper to convert a single XML file to CSV
-###############################################################################
-def convert_extracted_file_to_csv(extracted_file_path: Path, output_csv_path: Path) -> bool:
-    """
-    Use xml_to_df logic to convert the extracted XML file into a CSV.
-    Returns True if successful, False otherwise.
-    (This can cause MemoryError on huge files.)
-    """
-    if not extracted_file_path.exists():
-        return False
-    try:
-        df = xml_to_df(extracted_file_path)
-        df.to_csv(output_csv_path, index=False)
-        return True
-    except Exception as e:
-        print(f"[ERROR] convert_extracted_file_to_csv: {e}")
-        return False
-
-
-###############################################################################
 #                   CHUNKING LOGIC (Using iterparse to avoid mismatch)
 ###############################################################################
 def chunk_xml_by_type(xml_file_path: Path, content_type: str, records_per_file: int = 10000):
@@ -1411,17 +1343,16 @@ class DiscogsDataProcessorUI(ttk.Frame):
             self.log_to_console(f"Failed to extract files: {', '.join(map(str, failed_files))}", "WARNING")
 
     ###########################################################################
-    #                           CONVERT SELECTED
+    #                           CONVERT SELECTED (FIXED)
     ###########################################################################
     def convert_selected(self):
         """
         Convert extracted .xml file(s) to a single CSV in a memory-friendly way:
-          1) Chunk the file if needed (chunk_xml_by_type).
-          2) For each chunk, discover columns (PASS 1) and stream rows to CSV (PASS 2).
-          3) Remove chunk folder.
+          - Always chunk the file (iterparse).
+          - Convert all chunks to CSV (two-pass streaming).
+          - Remove chunk folders when done.
 
-        If file is < 512 MB, tries direct convert_extracted_file_to_csv (old method).
-        But that can lead to MemoryError. If that happens, fallback to streaming chunk approach.
+        This avoids recursion issues by NOT using any direct xml_to_df approach.
         """
         checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
         if not checked_items:
@@ -1431,7 +1362,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         for item in checked_items:
             values = self.tree.item(item, "values")
             month_val = values[1]
-            content_val = values[2]  # e.g. "releases", "artists", etc.
+            content_val = values[2]  # e.g., "releases", "artists", etc.
             size_val = values[3]
             downloaded_val = values[4]
             extracted_val = values[5]
@@ -1452,7 +1383,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 (self.data_df["Extracted"] == extracted_val) &
                 (self.data_df["Processed"] == processed_val)
             ]
-
             if row_data.empty:
                 continue
 
@@ -1464,59 +1394,27 @@ class DiscogsDataProcessorUI(ttk.Frame):
             ).with_suffix("")  # remove .gz => .xml
 
             if extracted_file.exists() and extracted_file.suffix.lower() == ".xml":
-                file_size_mb = extracted_file.stat().st_size / (1024 * 1024)
-                combined_csv = extracted_file.with_suffix(".csv")  # final single CSV
+                # Her zaman chunk approach
+                try:
+                    combined_csv = extracted_file.with_suffix(".csv")
+                    self.log_to_console(f"Chunking XML by type: {extracted_file}", "INFO")
+                    chunk_xml_by_type(extracted_file, content_type=content_val, records_per_file=10000)
 
-                # Safety threshold for direct DataFrame approach
-                threshold_mb = 512
+                    chunk_folder = extracted_file.parent / f"chunked_{content_val}"
+                    self.log_to_console(f"Converting chunked files in {chunk_folder} to CSV...", "INFO")
+                    convert_chunked_files_to_csv(chunk_folder, combined_csv, content_val)
 
-                if file_size_mb <= threshold_mb:
-                    # Try direct conversion, hoping for no MemoryError
-                    self.log_to_console(f"Attempting direct conversion of {extracted_file} (~{file_size_mb:.1f} MB)", "INFO")
-                    success = convert_extracted_file_to_csv(extracted_file, combined_csv)
-                    if success:
-                        self.log_to_console(f"Converted {extracted_file} → {combined_csv}", "INFO")
-                        self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✔"
-                    else:
-                        # Possibly MemoryError or similar
-                        self.log_to_console("Direct conversion failed, fallback to streaming approach.", "WARNING")
-                        self._streaming_conversion(extracted_file, content_val, combined_csv, url)
-                else:
-                    # Large file, use streaming
-                    self.log_to_console(f"File {extracted_file} is {file_size_mb:.2f} MB. Using streaming approach...", "INFO")
-                    self._streaming_conversion(extracted_file, content_val, combined_csv, url)
+                    shutil.rmtree(chunk_folder, ignore_errors=True)
+                    self.log_to_console(f"Removed temp folder: {chunk_folder}", "INFO")
+
+                    self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✔"
+                    self.log_to_console(f"Successfully created {combined_csv}", "INFO")
+                except Exception as e:
+                    self.log_to_console(f"Error during streaming conversion: {e}", "ERROR")
             else:
-                self.log_to_console(f"Extracted file {extracted_file} not found or not .xml!", "ERROR")
+                self.log_to_console(f"Extracted XML not found: {extracted_file}", "ERROR")
 
         self.populate_table(self.data_df)
-
-    def _streaming_conversion(self, extracted_file, content_type, output_csv, url):
-        """
-        Chunk the large XML using iterparse,
-        convert chunks to CSV using a 2-pass approach,
-        then delete the chunk folder.
-        """
-        try:
-            # 1) Chunk (iterparse)
-            self.log_to_console(f"Chunking {extracted_file}", "INFO")
-            chunk_xml_by_type(extracted_file, content_type=content_type, records_per_file=10000)
-
-            chunk_folder = extracted_file.parent / f"chunked_{content_type}"
-
-            # 2) Streaming CSV
-            self.log_to_console(f"Converting chunks in {chunk_folder}", "INFO")
-            convert_chunked_files_to_csv(chunk_folder, output_csv, content_type)
-
-            # 3) Remove chunk folder
-            shutil.rmtree(chunk_folder, ignore_errors=True)
-            self.log_to_console(f"Removed temp folder: {chunk_folder}", "INFO")
-
-            # Mark processed
-            self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✔"
-            self.log_to_console(f"All chunks combined into {output_csv}", "INFO")
-
-        except Exception as e:
-            self.log_to_console(f"Streaming conversion error: {e}", "ERROR")
 
     def get_folder_size(self, folder_path):
         total_size = 0
