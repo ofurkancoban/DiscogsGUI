@@ -25,6 +25,15 @@ from ttkbootstrap.dialogs import Messagebox
 from tkinter import messagebox
 from tkinter.scrolledtext import ScrolledText
 from tkinter import StringVar  # Import StringVar
+import sys
+
+if getattr(sys, 'frozen', False):
+    # If the application is run as a bundle, the path is the bundle's directory
+    PATH = Path(sys._MEIPASS) / 'assets'
+else:
+    # If the application is run normally, the path is the script's directory
+    PATH = Path(__file__).parent / 'assets'
+
 
 ###############################################################################
 #                          File-Type → XML Tag Mapping
