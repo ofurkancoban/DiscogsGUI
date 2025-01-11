@@ -27,13 +27,7 @@ from tkinter.scrolledtext import ScrolledText
 from tkinter import StringVar  # Import StringVar
 import sys
 
-if getattr(sys, 'frozen', False):
-    # If the application is run as a bundle, the path is the bundle's directory
-    PATH = Path(sys._MEIPASS) / 'assets'
-else:
-    # If the application is run normally, the path is the script's directory
-    PATH = Path(__file__).parent / 'assets'
-
+sys.setrecursionlimit(10**9)  # Örnek: 3000'e çıkarılıyor
 
 ###############################################################################
 #                          File-Type → XML Tag Mapping
@@ -44,6 +38,74 @@ TAG_MAP = {
     "masters": "<master",
     "labels": "<label"
 }
+
+
+###############################################################################
+#                              XML → DataFrame logic
+###############################################################################
+def xml_to_df(xml_path: Path) -> pd.DataFrame:
+    """Convert an XML file to a pandas DataFrame using iterative parsing
+       (non-streaming, might cause MemoryError on huge files)."""
+    data_dict = {}
+    current_path = []
+
+    for event, elem in ET.iterparse(str(xml_path), events=("start", "end")):
+        if event == "start":
+            current_path.append(elem.tag)
+            # handle attributes
+            for attr, value in elem.attrib.items():
+                if len(current_path) > 1:
+                    tag_name = f"{'_'.join(current_path[-2:])}_{attr}"
+                else:
+                    tag_name = f"{elem.tag}_{attr}"
+                if tag_name not in data_dict:
+                    data_dict[tag_name] = []
+                data_dict[tag_name].append(value)
+
+        elif event == "end":
+            if elem.text and not elem.text.isspace():
+                if len(current_path) > 1:
+                    tag_name = '_'.join(current_path[-2:])
+                else:
+                    tag_name = current_path[-1]
+                if tag_name not in data_dict:
+                    data_dict[tag_name] = []
+                data_dict[tag_name].append(elem.text.strip())
+            current_path.pop()
+            elem.clear()
+
+    # If data_dict is empty, return empty
+    if not data_dict:
+        return pd.DataFrame()
+
+    # unify lengths
+    max_len = max(len(lst) for lst in data_dict.values())
+    for key, value in data_dict.items():
+        if len(value) < max_len:
+            data_dict[key] = value + [None] * (max_len - len(value))
+
+    df = pd.DataFrame(data_dict)
+    return df
+
+
+###############################################################################
+#                            Helper to convert a single XML file to CSV
+###############################################################################
+def convert_extracted_file_to_csv(extracted_file_path: Path, output_csv_path: Path) -> bool:
+    """
+    Use xml_to_df logic to convert the extracted XML file into a CSV.
+    Returns True if successful, False otherwise.
+    (This can cause MemoryError on huge files.)
+    """
+    if not extracted_file_path.exists():
+        return False
+    try:
+        df = xml_to_df(extracted_file_path)
+        df.to_csv(output_csv_path, index=False)
+        return True
+    except Exception as e:
+        print(f"[ERROR] convert_extracted_file_to_csv: {e}")
+        return False
 
 
 ###############################################################################
@@ -542,14 +604,14 @@ class DiscogsDataProcessorUI(ttk.Frame):
         status_cf.pack(fill=BOTH, pady=1)
 
         status_frm = ttk.Frame(status_cf, padding=5)
-        status_frm.columnconfigure(1, weight=1)
+        status_frm.columnconfigure(3, weight=1)
         status_cf.add(child=status_frm, title='Status', bootstyle=SECONDARY)
 
         lbl = ttk.Label(status_frm, textvariable=self.prog_message_var, font='Arial 10 bold')
         lbl.grid(row=0, column=0, columnspan=2, sticky=W)
         self.prog_message_var.set('Idle...')
 
-        pb = ttk.Progressbar(status_frm, length=200, mode="determinate", bootstyle=SUCCESS)
+        pb = ttk.Progressbar(status_frm, length=245, mode="determinate", bootstyle=SUCCESS)
         pb.grid(row=1, column=0, columnspan=2, sticky=EW, pady=(5, 5))
         self.pb = pb
         self.pb["value"] = 0
@@ -1352,16 +1414,19 @@ class DiscogsDataProcessorUI(ttk.Frame):
             self.log_to_console(f"Failed to extract files: {', '.join(map(str, failed_files))}", "WARNING")
 
     ###########################################################################
-    #                           CONVERT SELECTED (FIXED)
+    #                           CONVERT SELECTED
     ###########################################################################
+    ###############################################################################
+    #                           CONVERT SELECTED (GÜNCELLENDİ)
+    ###############################################################################
     def convert_selected(self):
         """
         Convert extracted .xml file(s) to a single CSV in a memory-friendly way:
-          - Always chunk the file (iterparse).
+          - Chunk the file by type (iterparse).
           - Convert all chunks to CSV (two-pass streaming).
-          - Remove chunk folders when done.
+          - Remove chunk folders.
 
-        This avoids recursion issues by NOT using any direct xml_to_df approach.
+        Bu yöntemle büyük veya derin XML dosyalarında RecursionError riski azalır.
         """
         checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
         if not checked_items:
@@ -1371,12 +1436,13 @@ class DiscogsDataProcessorUI(ttk.Frame):
         for item in checked_items:
             values = self.tree.item(item, "values")
             month_val = values[1]
-            content_val = values[2]  # e.g., "releases", "artists", etc.
+            content_val = values[2]  # e.g., "releases", "artists", ...
             size_val = values[3]
             downloaded_val = values[4]
             extracted_val = values[5]
             processed_val = values[6]
 
+            # 1) Dosya gerçekten indirilmiş ve açılmış mı?
             if extracted_val != "✔":
                 self.log_to_console("File not extracted, cannot convert.", "WARNING")
                 continue
@@ -1384,6 +1450,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 self.log_to_console("File already processed. Skipping...", "INFO")
                 continue
 
+            # 2) URL'yi bul
             row_data = self.data_df[
                 (self.data_df["month"] == month_val) &
                 (self.data_df["content"] == content_val) &
@@ -1391,7 +1458,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 (self.data_df["Downloaded"] == downloaded_val) &
                 (self.data_df["Extracted"] == extracted_val) &
                 (self.data_df["Processed"] == processed_val)
-            ]
+                ]
             if row_data.empty:
                 continue
 
@@ -1399,31 +1466,67 @@ class DiscogsDataProcessorUI(ttk.Frame):
             folder_name = row_data["month"].values[0]
             filename = os.path.basename(url)
             extracted_file = (
-                Path(self.download_dir_var.get()) / "Datasets" / folder_name / filename
-            ).with_suffix("")  # remove .gz => .xml
+                    Path(self.download_dir_var.get()) / "Datasets" / folder_name / filename
+            ).with_suffix("")  # *.gz -> *.xml
 
+            # 3) Dosya mevcut mu ve .xml mi?
             if extracted_file.exists() and extracted_file.suffix.lower() == ".xml":
-                # Her zaman chunk approach
+                combined_csv = extracted_file.with_suffix(".csv")
+
                 try:
-                    combined_csv = extracted_file.with_suffix(".csv")
+                    # A) Önce XML'i chunk'layarak parça parça ayır
                     self.log_to_console(f"Chunking XML by type: {extracted_file}", "INFO")
                     chunk_xml_by_type(extracted_file, content_type=content_val, records_per_file=10000)
 
+                    # B) Chunk klasörünü pass-1/pass-2 metoduyla tek CSV'ye çevir
                     chunk_folder = extracted_file.parent / f"chunked_{content_val}"
-                    self.log_to_console(f"Converting chunked files in {chunk_folder} to CSV...", "INFO")
+                    self.log_to_console(f"Converting chunks in {chunk_folder} to CSV...", "INFO")
                     convert_chunked_files_to_csv(chunk_folder, combined_csv, content_val)
 
+                    # C) İş bitince chunk klasörünü temizle
                     shutil.rmtree(chunk_folder, ignore_errors=True)
                     self.log_to_console(f"Removed temp folder: {chunk_folder}", "INFO")
 
+                    # D) İşaretle: Dosya işlendi
                     self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✔"
                     self.log_to_console(f"Successfully created {combined_csv}", "INFO")
+
                 except Exception as e:
                     self.log_to_console(f"Error during streaming conversion: {e}", "ERROR")
+
             else:
                 self.log_to_console(f"Extracted XML not found: {extracted_file}", "ERROR")
 
+        # 4) Tabloyu güncelle
         self.populate_table(self.data_df)
+
+    def _streaming_conversion(self, extracted_file, content_type, output_csv, url):
+        """
+        Chunk the large XML using iterparse,
+        convert chunks to CSV using a 2-pass approach,
+        then delete the chunk folder.
+        """
+        try:
+            # 1) Chunk (iterparse)
+            self.log_to_console(f"Chunking {extracted_file}", "INFO")
+            chunk_xml_by_type(extracted_file, content_type=content_type, records_per_file=10000)
+
+            chunk_folder = extracted_file.parent / f"chunked_{content_type}"
+
+            # 2) Streaming CSV
+            self.log_to_console(f"Converting chunks in {chunk_folder}", "INFO")
+            convert_chunked_files_to_csv(chunk_folder, output_csv, content_type)
+
+            # 3) Remove chunk folder
+            shutil.rmtree(chunk_folder, ignore_errors=True)
+            self.log_to_console(f"Removed temp folder: {chunk_folder}", "INFO")
+
+            # Mark processed
+            self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✔"
+            self.log_to_console(f"All chunks combined into {output_csv}", "INFO")
+
+        except Exception as e:
+            self.log_to_console(f"Streaming conversion error: {e}", "ERROR")
 
     def get_folder_size(self, folder_path):
         total_size = 0
