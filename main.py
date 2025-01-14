@@ -21,13 +21,14 @@ import queue
 from tkinter import filedialog
 
 import ttkbootstrap as ttk
+from tkinter import Text
 from ttkbootstrap import Style
 from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from tkinter import messagebox
 from tkinter.scrolledtext import ScrolledText
 from tkinter import StringVar  # Import StringVar
-
+from tkinter.scrolledtext import ScrolledText
 
 ###############################################################################
 #                          File-Type → XML Tag Mapping
@@ -470,7 +471,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 try:
                     self.photoimages[key] = ttk.PhotoImage(name=key, file=_path)
                 except Exception as e:
-                    print(f"[ERROR] Failed to load image {key}: {e}")
+                    print(f"[ERROR] Failed to load image: {e}")
             else:
                 print(f"[WARNING] Image file not found: {_path}")
 
@@ -727,11 +728,11 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
         self.tree = tv
 
-        self.tree.bind("<Configure>", lambda e: self.position_checkbuttons())
-        self.tree.bind("<Motion>", lambda e: self.position_checkbuttons())
-        self.tree.bind("<ButtonRelease-1>", lambda e: self.position_checkbuttons())
-        self.tree.bind("<<TreeviewSelect>>", lambda e: self.position_checkbuttons())
-        right_panel.bind("<Configure>", lambda e: self.position_checkbuttons())
+        # self.tree.bind("<Configure>", lambda e: self.position_checkbuttons())
+        # self.tree.bind("<Motion>", lambda e: self.position_checkbuttons())
+        # self.tree.bind("<ButtonRelease-1>", lambda e: self.position_checkbuttons())
+        # self.tree.bind("<<TreeviewSelect>>", lambda e: self.position_checkbuttons())
+        # right_panel.bind("<Configure>", lambda e: self.position_checkbuttons())
 
         self.log_to_console("Welcome to the Discogs Data Processor", "INFO")
         self.log_to_console("The application is fetching data automatically, please wait...", "INFO")
@@ -1668,12 +1669,9 @@ def main():
     # Use the "darkly" theme for a dark appearance
     app = ttk.Window("Discogs Data Processor", themename="darkly")
     primary_color = app.style.colors.primary
+    app.iconphoto(True, ttk.PhotoImage(file="assets/app_icon.png"))
 
-    icon_path = Path(__file__).parent / "assets / app_icon.ico"
-    if icon_path.exists():
-        app.iconphoto(False, ttk.PhotoImage(file=icon_path))
-    else:
-        print("[WARNING] Icon file not found:", icon_path)
+
 
     # Optionally, if you want Treeview heading text to be white on dark:
     style = ttk.Style()
