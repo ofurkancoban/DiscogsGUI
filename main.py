@@ -123,67 +123,51 @@ def convert_extracted_file_to_csv(extracted_file_path: Path, output_csv_path: Pa
 ###############################################################################
 #                   CHUNKING LOGIC (Using iterparse to avoid mismatch)
 ###############################################################################
-def chunk_xml_by_type(xml_file_path: Path, content_type: str, records_per_file: int = 10000, logger=None):
+def chunk_xml_by_type(xml_file: Path, content_type: str, records_per_file: int = 10000, logger=None):
     """
-    Safely chunk a Discogs XML file by the appropriate record tag for its 'content_type',
-    using ET.iterparse so that each chunk is well-formed.
-
-    For example, if content_type='releases', we chunk by <release>...</release> blocks.
-    The chunk files will be named chunk_0.xml, chunk_1.xml, etc., each wrapped in <root>...</root>.
+    1. Pass: Split large XML into smaller chunks by record type.
     """
-    # Determine the record tag (singular), e.g. 'releases' -> 'release'
-    record_tag = content_type[:-1] if content_type in TAG_MAP else 'release'
-
-    start_time = time.time()
-    record_counter = 0
-    file_counter = 0
-
-    # Output folder
-    output_folder = f"chunked_{content_type}"
-    output_folder_path = xml_file_path.parent / output_folder
-    output_folder_path.mkdir(exist_ok=True)
-
-    # First chunk file
-    chunk_file_path = output_folder_path / f"chunk_{file_counter}.xml"
-    f_out = chunk_file_path.open("w", encoding="utf-8")
-    f_out.write("<root>\n")
-
-    # Use iterparse
-    context = ET.iterparse(str(xml_file_path), events=("start", "end"))
-    # We need the root to clear memory
-    _, root = next(context)  # get the root element
-
-    for event, elem in context:
-        if event == "end" and elem.tag == record_tag:
-            # One full record is done
-            record_str = ET.tostring(elem, encoding="unicode")
-            f_out.write(record_str)
-            record_counter += 1
-
-            # Clear from memory
+    chunk_folder = xml_file.parent / f"chunked_{content_type}"
+    chunk_folder.mkdir(exist_ok=True)
+    
+    record_tag = content_type[:-1]  # e.g., "releases" -> "release"
+    chunk_count = 0
+    record_count = 0
+    current_chunk = None
+    
+    for event, elem in ET.iterparse(str(xml_file), events=("start", "end")):
+        if event == "start":
+            if elem.tag == record_tag:
+                if record_count % records_per_file == 0:
+                    if current_chunk is not None:
+                        current_chunk.write(f"</{content_type}>")
+                        current_chunk.close()
+                    
+                    # Use zfill to ensure proper sorting (e.g., chunk_001.xml)
+                    chunk_count += 1
+                    chunk_file = chunk_folder / f"chunk_{str(chunk_count).zfill(6)}.xml"
+                    current_chunk = open(chunk_file, "w", encoding="utf-8")
+                    current_chunk.write(f'<?xml version="1.0" encoding="utf-8"?>\n<{content_type}>')
+                    
+                    if logger:
+                        logger(f"Created new chunk: {chunk_file.name}", "INFO")
+                    else:
+                        print(f"Created new chunk: {chunk_file.name}")
+                
+                record_count += 1
+                current_chunk.write(ET.tostring(elem, encoding="unicode"))
+            
+        elif event == "end" and elem.tag == record_tag:
             elem.clear()
-            root.clear()
+    
+    if current_chunk is not None:
+        current_chunk.write(f"</{content_type}>")
+        current_chunk.close()
 
-            # If reached chunk limit, close current chunk and open a new one
-            if record_counter % records_per_file == 0:
-                f_out.write("</root>\n")
-                f_out.close()
-                file_counter += 1
-                chunk_file_path = output_folder_path / f"chunk_{file_counter}.xml"
-                f_out = chunk_file_path.open("w", encoding="utf-8")
-                f_out.write("<root>\n")
-
-    # Close the last chunk
-    f_out.write("</root>\n")
-    f_out.close()
-
-    elapsed_time = time.time() - start_time
     if logger:
-        logger(f"Done chunking {xml_file_path.name} via iterparse.", "INFO")
-        logger(f"Created {file_counter + 1} chunk files in '{output_folder}', total {record_counter} records. Elapsed: {elapsed_time / 60:.1f} min.", "INFO")
+        logger(f"Chunking complete. Created {chunk_count} chunks.", "INFO")
     else:
-        print(f"[INFO] Done chunking {xml_file_path.name} via iterparse.")
-        print(f"       Created {file_counter + 1} chunk files in '{output_folder}', total {record_counter} records. Elapsed: {elapsed_time / 60:.1f} min.")
+        print(f"Chunking complete. Created {chunk_count} chunks.")
 
 
 ###############################################################################
@@ -787,6 +771,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 left_seconds = left % 60
                 self.after(0, self.prog_time_left_var.set, f"Left: {int(left_minutes)} min {int(left_seconds)} sec")
                 self.after(0, self.prog_message_var.set, f"Downloading: {percentage:.2f}%")
+
     # [UPDATED] New method: Allow user to select download folder and create Discogs folder
     def open_settings(self):
         """Allows the user to select a download folder and creates a Discogs folder.
@@ -1051,45 +1036,34 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
     def log_to_console(self, message, message_type="INFO"):
         """
-        Logs a message to the console_text widget with appropriate formatting based on message_type.
+        Logs a message to the console_text widget with timestamp and color coding.
+        Every other line alternates between white and light blue.
         """
         self.console_text.config(state='normal')
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         formatted_message = f"→ [{timestamp}] [{message_type.upper()}]: {message}\n"
 
-        self.console_text.insert('end', formatted_message)
-
-        # Apply color based on message type
-        if message_type.upper() == "INFO":
-            tag = "info"
-        elif message_type.upper() == "WARNING":
-            tag = "warning"
-        elif message_type.upper() == "ERROR":
-            tag = "error"
-        else:
-            tag = "default"
-
-        self.console_text.tag_add(tag, "end-2c linestart", "end-1c lineend")
-
-        # Configure tag colors
-        if not self.console_text.tag_cget(tag, "foreground"):
-            if tag == "info":
-                self.console_text.tag_config(tag, foreground="#4e92e4")  # Blue
-            elif tag == "warning":
-                self.console_text.tag_config(tag, foreground="#f0ad4e")  # Orange
-            elif tag == "error":
-                self.console_text.tag_config(tag, foreground="#d9534f")  # Red
-            else:
-                self.console_text.tag_config(tag, foreground="#ffffff")  # White
-
-        self.console_text.config(state='disabled')
+        # Get current line count (excluding the new line we're about to add)
+        current_line = int(self.console_text.index('end-1c').split('.')[0])
+        
+        # Configure tags for alternating colors
+        self.console_text.tag_configure("even_line", foreground="white")
+        self.console_text.tag_configure("odd_line", foreground="#63b4f4")  # Light blue
+        
+        # Apply tag based on line number
+        tag = "even_line" if current_line % 2 == 0 else "odd_line"
+        
+        # Insert the message with appropriate color tag
+        self.console_text.insert('end', formatted_message, tag)
+        
+        # Auto-scroll and update UI
         self.console_text.see('end')
+        self.console_text.config(state='disabled')
 
-        # Update the scroll message variable
+        # Update scroll message with truncated content if necessary
         message_content = message.strip()
-        max_header_length = 80
-        if len(message_content) > max_header_length:
-            message_content = message_content[:max_header_length] + '...'
+        if len(message_content) > 80:
+            message_content = message_content[:80] + '...'
         self.scroll_message_var.set(f"Log: {message_content}")
 
     def mark_downloaded_files(self, data_df):
@@ -1214,6 +1188,13 @@ class DiscogsDataProcessorUI(ttk.Frame):
                         f_out.write(f_in.read())
                     part_file.unlink()
 
+        # Show completion popup
+        self.show_centered_popup(
+            "Download Complete",
+            f"{filename} successfully downloaded",
+            "info"
+        )
+        
         return True
 
     def download_file(self, url, filename, folder_name):
@@ -1249,6 +1230,13 @@ class DiscogsDataProcessorUI(ttk.Frame):
                     self.populate_table(self.data_df)
                     self.update_downloaded_size()
                     self.prog_message_var.set('Idle...')
+                    
+                    # Show completion popup
+                    self.after(0, lambda: self.show_centered_popup(
+                        "Download Complete",
+                        f"{filename} successfully downloaded",
+                        "info"
+                    ))
             else:
                 self.single_thread_download(url, filename, folder_name)
 
@@ -1257,7 +1245,13 @@ class DiscogsDataProcessorUI(ttk.Frame):
             if file_path and file_path.exists():
                 file_path.unlink()
                 self.log_to_console(f"Incomplete file {file_path} deleted.", "WARNING")
-
+            
+            # Show error popup
+            self.after(0, lambda: self.show_centered_popup(
+                "Download Error",
+                f"Error during download:\n{str(e)}",
+                "error"
+            ))
 
     def handle_download_status(self, q):
         try:
@@ -1330,12 +1324,26 @@ class DiscogsDataProcessorUI(ttk.Frame):
             self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✖"
             self.populate_table(self.data_df)
             self.update_downloaded_size()
+            
+            # Show completion popup
+            self.show_centered_popup(
+                "Download Complete",
+                f"{filename} successfully downloaded",
+                "info"
+            )
 
         except Exception as e:
             self.log_to_console(f"Error during single-threaded download: {e}", "ERROR")
             if file_path.exists():
                 self.log_to_console(f"Incomplete file {file_path} deleted.", "WARNING")
                 file_path.unlink()
+            
+            # Show error popup
+            self.show_centered_popup(
+                "Download Error",
+                f"Error during download:\n{str(e)}",
+                "error"
+            )
 
     def stop_download(self):
         """Sets the stop flag to True to halt operations."""
@@ -1373,42 +1381,63 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 self.start_download(url, filename, last_modified)
 
     def extract_gz_file_with_progress(self, file_path):
-        self.prog_message_var.set('Extracting file...')
-        output_path = file_path.with_suffix('')
-        total_size = file_path.stat().st_size
-        self.pb["value"] = 0
-        self.pb["maximum"] = total_size
-        self.pb.update()
-
-        start_time = datetime.now()
-        timeout = 300  # 5-minute timeout
-        extracted_size = 0
-        block_size = 1024 * 64
-
+        """Extract a gzip file with progress tracking."""
         try:
-            with gzip.open(file_path, 'rb') as f_in, open(output_path, 'wb') as f_out:
-                while not self.stop_flag:
-                    chunk = f_in.read(block_size)
-                    if not chunk:
-                        break
-                    f_out.write(chunk)
-                    extracted_size += len(chunk)
-                    self.pb["value"] = extracted_size
+            output_path = file_path.with_suffix('')
+            total_size = file_path.stat().st_size
+            extracted_size = 0
 
-                    elapsed = (datetime.now() - start_time).total_seconds()
-                    if elapsed > timeout:
-                        self.log_to_console("Extraction timed out.", "WARNING")
-                        break
+            # Create a queue for progress updates
+            progress_queue = queue.Queue()
 
-                    speed = (extracted_size / elapsed) / (1024 * 1024) if elapsed > 0 else 0.0
-                    self.prog_speed_var.set(f"Extract Speed: {speed:.2f} MB/s")
-                    self.prog_message_var.set(f"Extracting {file_path.name}: \n {extracted_size / total_size * 100:.2f}%")
-
-                if elapsed > timeout:
+            def extract_worker():
+                nonlocal extracted_size
+                try:
+                    with gzip.open(file_path, 'rb') as f_in, open(output_path, 'wb') as f_out:
+                        while True:
+                            chunk = f_in.read(1024 * 1024)  # 1MB chunks
+                            if not chunk:
+                                break
+                            f_out.write(chunk)
+                            extracted_size += len(chunk)
+                            progress = min(100, int((extracted_size / total_size) * 100))
+                            progress_queue.put(('progress', progress))
+                    progress_queue.put(('done', None))
+                    return True
+                except Exception as e:
+                    progress_queue.put(('error', str(e)))
                     return False
 
-            self.prog_message_var.set('Idle...')
-            return not self.stop_flag
+            def update_progress():
+                try:
+                    msg_type, value = progress_queue.get_nowait()
+                    if msg_type == 'progress':
+                        self.pb["value"] = value
+                        self.prog_message_var.set(f'Extracting {file_path.name}: {value}%')
+                        self.update_idletasks()
+                        self.after(10, update_progress)
+                    elif msg_type == 'done':
+                        self.pb["value"] = 100
+                        self.prog_message_var.set('Extraction complete')
+                        self.update_idletasks()
+                    elif msg_type == 'error':
+                        self.log_to_console(f"Error extracting: {value}", "ERROR")
+                except queue.Empty:
+                    self.after(10, update_progress)
+
+            # Start extraction in a separate thread
+            extract_thread = Thread(target=extract_worker)
+            extract_thread.start()
+
+            # Start progress updates in main thread
+            self.pb["value"] = 0
+            self.prog_message_var.set(f'Extracting {file_path.name}...')
+            self.update_idletasks()
+            update_progress()
+
+            # Wait for extraction to complete
+            extract_thread.join()
+            return True
 
         except Exception as e:
             self.log_to_console(f"Error extracting {file_path}: {e}", "ERROR")
@@ -1418,13 +1447,10 @@ class DiscogsDataProcessorUI(ttk.Frame):
         self.log_to_console("Extracting started...", "INFO")
         self.prog_message_var.set('Waiting 2 seconds before extraction...')
         # Ana iş parçacığını kilitlememek için kısa bir gecikme ekleyin
-        self.after(2000, self._extract_selected_thread)
+        self.after(2000, self.extract_selected_thread)
 
-    def _extract_selected_thread(self):
-        """Extraction işlemini ayrı bir iş parçacığında başlat."""
-        threading.Thread(target=self._extract_selected, daemon=True).start()
-
-    def _extract_selected(self):
+    def extract_selected_thread(self):
+        """Handles the actual extraction process in a separate thread."""
         try:
             self.prog_message_var.set('Extracting now...')
             extracted_files = []
@@ -1489,8 +1515,35 @@ class DiscogsDataProcessorUI(ttk.Frame):
             if failed_files:
                 self.log_to_console(f"Failed to extract files: {', '.join(map(str, failed_files))}", "WARNING")
 
+            # Show simple completion popup with filename
+            if extracted_files:
+                filename = extracted_files[-1].name
+                message = f"{filename} successfully extracted"
+            else:
+                message = "No files were extracted"
+                
+            self.after(0, lambda: self.show_centered_popup(
+                "Extraction Complete",
+                message,
+                "info"
+            ))
+
         except Exception as e:
             self.log_to_console(f"Error during extraction: {e}", "ERROR")
+            self.after(0, lambda: self.show_centered_popup(
+                "Extraction Error",
+                f"Error during extraction:\n{str(e)}",
+                "error"
+            ))
+
+    def show_centered_popup(self, title, message, message_type="info"):
+        """Shows a centered popup message."""
+        if message_type == "info":
+            popup = messagebox.showinfo(title, message, parent=self)
+        elif message_type == "warning":
+            popup = messagebox.showwarning(title, message, parent=self)
+        elif message_type == "error":
+            popup = messagebox.showerror(title, message, parent=self)
 
     def handle_extract_status(self, q):
         try:
@@ -1510,87 +1563,119 @@ class DiscogsDataProcessorUI(ttk.Frame):
     ###########################################################################
     def convert_selected(self):
         def convert_thread():
-            checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
-            if not checked_items:
-                messagebox.showwarning("Warning", "No file selected!")
-                return
+            try:
+                converted_files = []
+                failed_files = []
+                
+                checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
+                if not checked_items:
+                    self.after(0, lambda: self.show_centered_popup(
+                        "Warning", 
+                        "No file selected!", 
+                        "warning"
+                    ))
+                    return
 
-            for item in checked_items:
-                values = self.tree.item(item, "values")
-                month_val = values[1]
-                content_val = values[2]  # e.g., "releases", "artists", ...
-                size_val = values[3]
-                downloaded_val = values[4]
-                extracted_val = values[5]
-                processed_val = values[6]
+                for item in checked_items:
+                    values = self.tree.item(item, "values")
+                    month_val = values[1]
+                    content_val = values[2]  # e.g., "releases", "artists", ...
+                    size_val = values[3]
+                    downloaded_val = values[4]
+                    extracted_val = values[5]
+                    processed_val = values[6]
 
-                # 1) Check if the file is downloaded and extracted
-                if extracted_val != "✔":
-                    self.log_to_console("File not extracted, cannot convert.", "WARNING")
-                    continue
-                if processed_val == "✔":
-                    self.log_to_console("File already processed. Skipping...", "INFO")
-                    continue
+                    # 1) Check if the file is downloaded and extracted
+                    if extracted_val != "✔":
+                        self.log_to_console("File not extracted, cannot convert.", "WARNING")
+                        continue
+                    if processed_val == "✔":
+                        self.log_to_console("File already processed. Skipping...", "INFO")
+                        continue
 
-                # 2) Find the URL
-                row_data = self.data_df[
-                    (self.data_df["month"] == month_val) &
-                    (self.data_df["content"] == content_val) &
-                    (self.data_df["size"] == size_val) &
-                    (self.data_df["Downloaded"] == downloaded_val) &
-                    (self.data_df["Extracted"] == extracted_val) &
-                    (self.data_df["Processed"] == processed_val)
-                    ]
-                if row_data.empty:
-                    continue
+                    # 2) Find the URL
+                    row_data = self.data_df[
+                        (self.data_df["month"] == month_val) &
+                        (self.data_df["content"] == content_val) &
+                        (self.data_df["size"] == size_val) &
+                        (self.data_df["Downloaded"] == downloaded_val) &
+                        (self.data_df["Extracted"] == extracted_val) &
+                        (self.data_df["Processed"] == processed_val)
+                        ]
+                    if row_data.empty:
+                        continue
 
-                url = row_data["URL"].values[0]
-                folder_name = row_data["month"].values[0]
-                filename = os.path.basename(url)
-                extracted_file = (
-                        Path(self.download_dir_var.get()) / "Datasets" / folder_name / filename
-                ).with_suffix("")  # *.gz -> *.xml
+                    url = row_data["URL"].values[0]
+                    folder_name = row_data["month"].values[0]
+                    filename = os.path.basename(url)
+                    extracted_file = (
+                            Path(self.download_dir_var.get()) / "Datasets" / folder_name / filename
+                    ).with_suffix("")  # *.gz -> *.xml
 
-                # 3) Check if the extracted file exists and is .xml
-                if extracted_file.exists() and extracted_file.suffix.lower() == ".xml":
-                    combined_csv = extracted_file.with_suffix(".csv")
+                    # 3) Check if the extracted file exists and is .xml
+                    if extracted_file.exists() and extracted_file.suffix.lower() == ".xml":
+                        combined_csv = extracted_file.with_suffix(".csv")
 
-                    try:
-                        # A) Chunk the XML file
-                        self.log_to_console(f"Chunking XML by type: {extracted_file}", "INFO")
-                        chunk_xml_by_type(
-                            extracted_file,
-                            content_type=content_val,
-                            records_per_file=10000,
-                            logger=self.log_to_console  # Pass the logger
-                        )
+                        try:
+                            # A) Chunk the XML file
+                            self.log_to_console(f"Chunking XML by type: {extracted_file}", "INFO")
+                            chunk_xml_by_type(
+                                extracted_file,
+                                content_type=content_val,
+                                records_per_file=10000,
+                                logger=self.log_to_console  # Pass the logger
+                            )
 
-                        # B) Convert chunks to a single CSV
-                        chunk_folder = extracted_file.parent / f"chunked_{content_val}"
-                        self.log_to_console(f"Converting chunks in {chunk_folder} to CSV...", "INFO")
-                        convert_chunked_files_to_csv(
-                            chunk_folder,
-                            combined_csv,
-                            content_val,
-                            logger=self.log_to_console  # Pass the logger
-                        )
+                            # B) Convert chunks to a single CSV
+                            chunk_folder = extracted_file.parent / f"chunked_{content_val}"
+                            self.log_to_console(f"Converting chunks in {chunk_folder} to CSV...", "INFO")
+                            convert_chunked_files_to_csv(
+                                chunk_folder,
+                                combined_csv,
+                                content_val,
+                                logger=self.log_to_console  # Pass the logger
+                            )
 
-                        # C) Clean up the chunk folder
-                        shutil.rmtree(chunk_folder, ignore_errors=True)
-                        self.log_to_console(f"Removed temp folder: {chunk_folder}", "INFO")
+                            # C) Clean up the chunk folder
+                            shutil.rmtree(chunk_folder, ignore_errors=True)
+                            self.log_to_console(f"Removed temp folder: {chunk_folder}", "INFO")
 
-                        # D) Mark the file as processed
-                        self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✔"
-                        self.log_to_console(f"Successfully created {combined_csv}", "INFO")
+                            # D) Mark the file as processed
+                            self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✔"
+                            self.log_to_console(f"Successfully created {combined_csv}", "INFO")
 
-                    except Exception as e:
-                        self.log_to_console(f"Error during streaming conversion: {e}", "ERROR")
+                            converted_files.append(combined_csv)
+                        except Exception as e:
+                            self.log_to_console(f"Error during streaming conversion: {e}", "ERROR")
+                            failed_files.append(extracted_file)
 
+                    else:
+                        self.log_to_console(f"Extracted XML not found: {extracted_file}", "ERROR")
+                        failed_files.append(extracted_file)
+
+                # Update the table after conversion
+                self.after(0, self.populate_table, self.data_df)  # Update the table
+
+                # Show simple completion popup with filename
+                if converted_files:
+                    filename = converted_files[-1].name
+                    message = f"{filename} successfully converted"
                 else:
-                    self.log_to_console(f"Extracted XML not found: {extracted_file}", "ERROR")
+                    message = "No files were converted"
+                    
+                self.after(0, lambda: self.show_centered_popup(
+                    "Conversion Complete",
+                    message,
+                    "info"
+                ))
 
-            # Update the table after conversion
-            self.after(0, self.populate_table, self.data_df)  # Update the table
+            except Exception as e:
+                self.log_to_console(f"Error during conversion: {e}", "ERROR")
+                self.after(0, lambda: self.show_centered_popup(
+                    "Conversion Error",
+                    f"Error during conversion:\n{str(e)}",
+                    "error"
+                ))
 
         threading.Thread(target=convert_thread, daemon=True).start()
 
@@ -1745,8 +1830,8 @@ def main():
     ui = DiscogsDataProcessorUI(app, empty_df)
     ui.pack(fill=BOTH, expand=True)
 
-    window_width = 750
-    window_height = 750
+    window_width = 775
+    window_height = 775
 
     screen_width = app.winfo_screenwidth()
     screen_height = app.winfo_screenheight()
