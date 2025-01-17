@@ -1,8 +1,8 @@
 import threading
 import time
-import math
 import gzip
 import os
+import sys
 import shutil  # <-- we use shutil.rmtree() to remove chunk folders
 import requests
 import platform
@@ -13,22 +13,13 @@ from datetime import datetime
 from pathlib import Path
 from threading import Thread, Lock
 import webbrowser  # <-- for opening social media links
-import re
 import csv
 import queue
-
-# [UPDATED] New import: Folder selection dialog
 from tkinter import filedialog
-
 import ttkbootstrap as ttk
-from tkinter import Text
-from ttkbootstrap import Style
 from ttkbootstrap.constants import *
-from ttkbootstrap.dialogs import Messagebox
 from tkinter import messagebox
-from tkinter.scrolledtext import ScrolledText
 from tkinter import StringVar  # Import StringVar
-from tkinter.scrolledtext import ScrolledText
 
 ###############################################################################
 #                          File-Type → XML Tag Mapping
@@ -129,12 +120,12 @@ def chunk_xml_by_type(xml_file: Path, content_type: str, records_per_file: int =
     """
     chunk_folder = xml_file.parent / f"chunked_{content_type}"
     chunk_folder.mkdir(exist_ok=True)
-    
+
     record_tag = content_type[:-1]  # e.g., "releases" -> "release"
     chunk_count = 0
     record_count = 0
     current_chunk = None
-    
+
     for event, elem in ET.iterparse(str(xml_file), events=("start", "end")):
         if event == "start":
             if elem.tag == record_tag:
@@ -142,24 +133,24 @@ def chunk_xml_by_type(xml_file: Path, content_type: str, records_per_file: int =
                     if current_chunk is not None:
                         current_chunk.write(f"</{content_type}>")
                         current_chunk.close()
-                    
+
                     # Use zfill to ensure proper sorting (e.g., chunk_001.xml)
                     chunk_count += 1
                     chunk_file = chunk_folder / f"chunk_{str(chunk_count).zfill(6)}.xml"
                     current_chunk = open(chunk_file, "w", encoding="utf-8")
                     current_chunk.write(f'<?xml version="1.0" encoding="utf-8"?>\n<{content_type}>')
-                    
+
                     if logger:
                         logger(f"Created new chunk: {chunk_file.name}", "INFO")
                     else:
                         print(f"Created new chunk: {chunk_file.name}")
-                
+
                 record_count += 1
                 current_chunk.write(ET.tostring(elem, encoding="unicode"))
-            
+
         elif event == "end" and elem.tag == record_tag:
             elem.clear()
-    
+
     if current_chunk is not None:
         current_chunk.write(f"</{content_type}>")
         current_chunk.close()
@@ -211,7 +202,8 @@ def update_columns_from_chunk(chunk_file_path: Path, all_columns: set, record_ta
         print(f"Updated columns from {chunk_file_path.name}. Total columns now: {len(all_columns)}")
 
 
-def write_chunk_to_csv(chunk_file_path: Path, csv_writer: csv.DictWriter, all_columns: list, record_tag: str, logger=None):
+def write_chunk_to_csv(chunk_file_path: Path, csv_writer: csv.DictWriter, all_columns: list, record_tag: str,
+                       logger=None):
     """
     2. Pass: Parse the chunk file line by line.
              For each <record_tag>...</record_tag> record, write a single row to the CSV.
@@ -293,9 +285,17 @@ def convert_chunked_files_to_csv(chunk_folder: Path, output_csv: Path, content_t
 ###############################################################################
 #                             S3 + UI + Main Logic
 ###############################################################################
+# PyInstaller ile paketlendiğinde, __file__ kullanımı sorun yaratabilir.
+# Aşağıdaki kontrol, eğer sys._MEIPASS varsa, o dizini kullanarak assets'i bulur.
 
-# [UPDATED] Path to the assets folder
-PATH = Path(__file__).parent / 'assets'
+if getattr(sys, 'frozen', False):
+    # PyInstaller ile paketlenmiş
+    BASE_DIR = Path(sys._MEIPASS)
+else:
+    # Normal Python çalışması
+    BASE_DIR = Path(__file__).parent
+
+PATH = BASE_DIR / 'assets'
 
 
 def human_readable_size(num_bytes):
@@ -310,13 +310,16 @@ def human_readable_size(num_bytes):
     else:
         return f"{num_bytes // (1024 ** 3)} GB"
 
-def update_progress_bar(self, current_value, total_value):
-    """Update progress bar and ensure it is synchronized with the process."""
-    if total_value > 0:
-        progress_percentage = (current_value / total_value) * 100
-        self.after(0, self.pb.configure, {"value": progress_percentage})
+
+def update_progress_bar(self, current_bytes, total_bytes):
+    """Simple progress bar update, no self-calling."""
+    if total_bytes > 0:
+        percentage = (current_bytes / total_bytes) * 100
+        self.pb['value'] = percentage
     else:
-        self.after(0, self.pb.configure, {"value": 0})
+        self.pb['value'] = 0
+    self.update_idletasks()
+
 
 def list_directories_from_s3(base_url="https://discogs-data-dumps.s3.us-west-2.amazonaws.com/", prefix="data/"):
     """Retrieve a list of 'directories' (common prefixes) from the S3 XML listing."""
@@ -478,7 +481,8 @@ class DiscogsDataProcessorUI(ttk.Frame):
         }
 
         self.photoimages = {}
-        imgpath = Path(__file__).parent / 'assets'
+        # Burada BASE_DIR'i kullanıyoruz:
+        imgpath = BASE_DIR / 'assets'
         for key, val in image_files.items():
             _path = imgpath / val
             if _path.exists():
@@ -635,7 +639,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
         pb = ttk.Progressbar(status_frm, length=245, mode="determinate", bootstyle=SUCCESS)
         pb.grid(row=1, column=0, columnspan=2, sticky=EW, pady=(5, 5))
-        self.pb = pb  # Progress bar'ı self.pb ile referansladığınızdan emin olun
+        self.pb = pb  # Keep reference to progress bar
 
         lbl = ttk.Label(status_frm, textvariable=self.prog_time_started_var)
         lbl.grid(row=2, column=0, columnspan=2, sticky=EW, pady=2)
@@ -772,7 +776,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 self.after(0, self.prog_time_left_var.set, f"Left: {int(left_minutes)} min {int(left_seconds)} sec")
                 self.after(0, self.prog_message_var.set, f"Downloading: {percentage:.2f}%")
 
-    # [UPDATED] New method: Allow user to select download folder and create Discogs folder
     def open_settings(self):
         """Allows the user to select a download folder and creates a Discogs folder.
            Then automatically starts the Fetch Data process."""
@@ -795,7 +798,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
         else:
             self.log_to_console("No folder selected. Keeping current setting.", "INFO")
 
-    # [UPDATED] No scrollbar in the Info window
     def open_info(self):
         """Opens an information window (no scrollbar)."""
         info_window = ttk.Toplevel(self)
@@ -833,7 +835,9 @@ class DiscogsDataProcessorUI(ttk.Frame):
         info_text = [
             ("Discogs Data Processor User Guide\n", "heading"),
             ("\nIntroduction\n", "subheading"),
-            ("This application helps you automatically download, extract, and convert Discogs datasets to CSV format. With its user-friendly interface, you can easily manage the processes.\n", "normal"),
+            (
+            "This application helps you automatically download, extract, and convert Discogs datasets to CSV format. With its user-friendly interface, you can easily manage the processes.\n",
+            "normal"),
             ("\nGetting Started\n", "subheading"),
             ("1. Download Folder Selection:\n", "normal"),
             ("   - Click the Settings button to select your download folder.\n", "bullet"),
@@ -1002,7 +1006,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 (self.data_df["Downloaded"] == downloaded_val) &
                 (self.data_df["Extracted"] == extracted_val) &
                 (self.data_df["Processed"] == processed_val)
-            ]
+                ]
             if not row_data.empty:
                 url = row_data["URL"].values[0]
                 folder_name = row_data["month"].values[0]
@@ -1045,17 +1049,17 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
         # Get current line count (excluding the new line we're about to add)
         current_line = int(self.console_text.index('end-1c').split('.')[0])
-        
+
         # Configure tags for alternating colors
         self.console_text.tag_configure("even_line", foreground="white")
         self.console_text.tag_configure("odd_line", foreground="#63b4f4")  # Light blue
-        
+
         # Apply tag based on line number
         tag = "even_line" if current_line % 2 == 0 else "odd_line"
-        
+
         # Insert the message with appropriate color tag
         self.console_text.insert('end', formatted_message, tag)
-        
+
         # Auto-scroll and update UI
         self.console_text.see('end')
         self.console_text.config(state='disabled')
@@ -1180,6 +1184,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                     p.unlink()
             return False
 
+        # Merge partial files
         with open(file_path, "wb") as f_out:
             for i in range(num_threads):
                 part_file = file_path.with_name(file_path.name + f".part{i}")
@@ -1188,13 +1193,11 @@ class DiscogsDataProcessorUI(ttk.Frame):
                         f_out.write(f_in.read())
                     part_file.unlink()
 
-        # Show completion popup
         self.show_centered_popup(
             "Download Complete",
             f"{filename} successfully downloaded",
             "info"
         )
-        
         return True
 
     def download_file(self, url, filename, folder_name):
@@ -1230,8 +1233,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                     self.populate_table(self.data_df)
                     self.update_downloaded_size()
                     self.prog_message_var.set('Idle...')
-                    
-                    # Show completion popup
+
                     self.after(0, lambda: self.show_centered_popup(
                         "Download Complete",
                         f"{filename} successfully downloaded",
@@ -1245,8 +1247,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
             if file_path and file_path.exists():
                 file_path.unlink()
                 self.log_to_console(f"Incomplete file {file_path} deleted.", "WARNING")
-            
-            # Show error popup
+
             self.after(0, lambda: self.show_centered_popup(
                 "Download Error",
                 f"Error during download:\n{str(e)}",
@@ -1257,7 +1258,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
         try:
             status = q.get_nowait()
             if status == 'Download finished':
-                # Table update and log after download completes
                 self.populate_table(self.data_df)
                 self.log_to_console("Download completed", "INFO")
             elif status == 'Download failed':
@@ -1265,7 +1265,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
             else:
                 self.log_to_console(status, "ERROR")
         except queue.Empty:
-            # Continue checking the queue
             self.after(100, self.handle_download_status, q)
 
     def single_thread_download(self, url, filename, folder_name):
@@ -1310,7 +1309,8 @@ class DiscogsDataProcessorUI(ttk.Frame):
                     if total_size > 0 and downloaded_size > 0:
                         percentage = (downloaded_size / total_size) * 100
                         left = int(
-                            (total_size - downloaded_size) / (downloaded_size / elapsed)) if downloaded_size > 0 else 0
+                            (total_size - downloaded_size) / (downloaded_size / elapsed)
+                        ) if downloaded_size > 0 else 0
                         left_minutes = left // 60
                         left_seconds = left % 60
                         self.prog_time_left_var.set(f'Left: {left_minutes} min {left_seconds} sec')
@@ -1324,8 +1324,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
             self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✖"
             self.populate_table(self.data_df)
             self.update_downloaded_size()
-            
-            # Show completion popup
+
             self.show_centered_popup(
                 "Download Complete",
                 f"{filename} successfully downloaded",
@@ -1337,8 +1336,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
             if file_path.exists():
                 self.log_to_console(f"Incomplete file {file_path} deleted.", "WARNING")
                 file_path.unlink()
-            
-            # Show error popup
+
             self.show_centered_popup(
                 "Download Error",
                 f"Error during download:\n{str(e)}",
@@ -1372,7 +1370,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 (self.data_df["Downloaded"] == downloaded_val) &
                 (self.data_df["Extracted"] == extracted_val) &
                 (self.data_df["Processed"] == processed_val)
-            ]
+                ]
             if not row_data.empty:
                 url = row_data["URL"].values[0]
                 last_modified = row_data["last_modified"].values[0]
@@ -1387,7 +1385,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
             total_size = file_path.stat().st_size
             extracted_size = 0
 
-            # Create a queue for progress updates
             progress_queue = queue.Queue()
 
             def extract_worker():
@@ -1425,17 +1422,14 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 except queue.Empty:
                     self.after(10, update_progress)
 
-            # Start extraction in a separate thread
             extract_thread = Thread(target=extract_worker)
             extract_thread.start()
 
-            # Start progress updates in main thread
             self.pb["value"] = 0
             self.prog_message_var.set(f'Extracting {file_path.name}...')
             self.update_idletasks()
             update_progress()
 
-            # Wait for extraction to complete
             extract_thread.join()
             return True
 
@@ -1446,11 +1440,9 @@ class DiscogsDataProcessorUI(ttk.Frame):
     def extract_selected(self):
         self.log_to_console("Extracting started...", "INFO")
         self.prog_message_var.set('Waiting 2 seconds before extraction...')
-        # Ana iş parçacığını kilitlememek için kısa bir gecikme ekleyin
         self.after(2000, self.extract_selected_thread)
 
     def extract_selected_thread(self):
-        """Handles the actual extraction process in a separate thread."""
         try:
             self.prog_message_var.set('Extracting now...')
             extracted_files = []
@@ -1482,7 +1474,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
                     (self.data_df["Extracted"] == extracted_val) &
                     (self.data_df["Processed"] == processed_val)
                     ]
-
                 if not row_data.empty:
                     url = row_data["URL"].values[0]
                     folder_name = row_data["month"].values[0]
@@ -1508,20 +1499,17 @@ class DiscogsDataProcessorUI(ttk.Frame):
                         else:
                             self.log_to_console(f"{file_path} is not a .gz file.", "WARNING")
 
-            # Extraction tamamlandığında GUI'yi güncelleyin
             self.after(0, self.populate_table, self.data_df)
             if extracted_files:
                 self.log_to_console(f"Extracted files: {', '.join(map(str, extracted_files))}", "INFO")
             if failed_files:
                 self.log_to_console(f"Failed to extract files: {', '.join(map(str, failed_files))}", "WARNING")
 
-            # Show simple completion popup with filename
             if extracted_files:
                 filename = extracted_files[-1].name
                 message = f"{filename} successfully extracted"
             else:
                 message = "No files were extracted"
-                
             self.after(0, lambda: self.show_centered_popup(
                 "Extraction Complete",
                 message,
@@ -1537,25 +1525,22 @@ class DiscogsDataProcessorUI(ttk.Frame):
             ))
 
     def show_centered_popup(self, title, message, message_type="info"):
-        """Shows a centered popup message."""
         if message_type == "info":
-            popup = messagebox.showinfo(title, message, parent=self)
+            messagebox.showinfo(title, message, parent=self)
         elif message_type == "warning":
-            popup = messagebox.showwarning(title, message, parent=self)
+            messagebox.showwarning(title, message, parent=self)
         elif message_type == "error":
-            popup = messagebox.showerror(title, message, parent=self)
+            messagebox.showerror(title, message, parent=self)
 
     def handle_extract_status(self, q):
         try:
             status = q.get_nowait()
             if status == 'Extraction finished':
-                # Update the table after extraction
                 self.populate_table(self.data_df)
                 self.log_to_console("Extraction completed", "INFO")
             else:
                 self.log_to_console(status, "ERROR")
         except queue.Empty:
-            # Continue checking the queue
             self.after(100, self.handle_extract_status, q)
 
     ###########################################################################
@@ -1566,12 +1551,12 @@ class DiscogsDataProcessorUI(ttk.Frame):
             try:
                 converted_files = []
                 failed_files = []
-                
+
                 checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
                 if not checked_items:
                     self.after(0, lambda: self.show_centered_popup(
-                        "Warning", 
-                        "No file selected!", 
+                        "Warning",
+                        "No file selected!",
                         "warning"
                     ))
                     return
@@ -1579,7 +1564,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 for item in checked_items:
                     values = self.tree.item(item, "values")
                     month_val = values[1]
-                    content_val = values[2]  # e.g., "releases", "artists", ...
+                    content_val = values[2]
                     size_val = values[3]
                     downloaded_val = values[4]
                     extracted_val = values[5]
@@ -1612,35 +1597,30 @@ class DiscogsDataProcessorUI(ttk.Frame):
                             Path(self.download_dir_var.get()) / "Datasets" / folder_name / filename
                     ).with_suffix("")  # *.gz -> *.xml
 
-                    # 3) Check if the extracted file exists and is .xml
                     if extracted_file.exists() and extracted_file.suffix.lower() == ".xml":
                         combined_csv = extracted_file.with_suffix(".csv")
 
                         try:
-                            # A) Chunk the XML file
                             self.log_to_console(f"Chunking XML by type: {extracted_file}", "INFO")
                             chunk_xml_by_type(
                                 extracted_file,
                                 content_type=content_val,
                                 records_per_file=10000,
-                                logger=self.log_to_console  # Pass the logger
+                                logger=self.log_to_console
                             )
 
-                            # B) Convert chunks to a single CSV
                             chunk_folder = extracted_file.parent / f"chunked_{content_val}"
                             self.log_to_console(f"Converting chunks in {chunk_folder} to CSV...", "INFO")
                             convert_chunked_files_to_csv(
                                 chunk_folder,
                                 combined_csv,
                                 content_val,
-                                logger=self.log_to_console  # Pass the logger
+                                logger=self.log_to_console
                             )
 
-                            # C) Clean up the chunk folder
                             shutil.rmtree(chunk_folder, ignore_errors=True)
                             self.log_to_console(f"Removed temp folder: {chunk_folder}", "INFO")
 
-                            # D) Mark the file as processed
                             self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✔"
                             self.log_to_console(f"Successfully created {combined_csv}", "INFO")
 
@@ -1653,16 +1633,13 @@ class DiscogsDataProcessorUI(ttk.Frame):
                         self.log_to_console(f"Extracted XML not found: {extracted_file}", "ERROR")
                         failed_files.append(extracted_file)
 
-                # Update the table after conversion
-                self.after(0, self.populate_table, self.data_df)  # Update the table
+                self.after(0, self.populate_table, self.data_df)
 
-                # Show simple completion popup with filename
                 if converted_files:
                     filename = converted_files[-1].name
                     message = f"{filename} successfully converted"
                 else:
                     message = "No files were converted"
-                    
                 self.after(0, lambda: self.show_centered_popup(
                     "Conversion Complete",
                     message,
@@ -1679,34 +1656,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
         threading.Thread(target=convert_thread, daemon=True).start()
 
-    def _streaming_conversion(self, extracted_file, content_type, output_csv, url):
-        """
-        Chunk the large XML using iterparse,
-        convert chunks to CSV using a 2-pass approach,
-        then delete the chunk folder.
-        """
-        try:
-            # 1) Chunk (iterparse)
-            self.log_to_console(f"Chunking {extracted_file}", "INFO")
-            chunk_xml_by_type(extracted_file, content_type=content_type, records_per_file=10000)
-
-            chunk_folder = extracted_file.parent / f"chunked_{content_type}"
-
-            # 2) Streaming CSV
-            self.log_to_console(f"Converting chunks in {chunk_folder}", "INFO")
-            convert_chunked_files_to_csv(chunk_folder, output_csv, content_type)
-
-            # 3) Remove chunk folder
-            shutil.rmtree(chunk_folder, ignore_errors=True)
-            self.log_to_console(f"Removed temp folder: {chunk_folder}", "INFO")
-
-            # Mark processed
-            self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✔"
-            self.log_to_console(f"All chunks combined into {output_csv}", "INFO")
-
-        except Exception as e:
-            self.log_to_console(f"Streaming conversion error: {e}", "ERROR")
-
     def get_folder_size(self, folder_path):
         total_size = 0
         for root, dirs, files in os.walk(folder_path):
@@ -1715,8 +1664,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 if os.path.exists(file_path):
                     total_size += os.path.getsize(file_path)
         return total_size
-
-
 
     def update_downloaded_size(self):
         downloads_dir = Path(self.download_dir_var.get())
@@ -1798,20 +1745,14 @@ class DiscogsDataProcessorUI(ttk.Frame):
         except Exception as e:
             self.log_to_console(f"Error: {e}", "ERROR")
 
-    def update_progress_bar(self, current_value, total_value):
-        """Update progress bar and ensure it is synchronized with the process."""
-        if total_value > 0:
-            progress_percentage = (current_value / total_value) * 100
-            self.pb["value"] = progress_percentage  # Güncellenen progress bar
-        else:
-            self.pb["value"] = 0  # Progress bar sıfırlandı
-        pass
-
 
 def main():
+    import sys
     # Initialize columns including "Processed"
-    empty_df = pd.DataFrame(columns=["month", "content", "size", "last_modified", "key", "URL",
-                                     "Downloaded", "Extracted", "Processed"])
+    empty_df = pd.DataFrame(columns=[
+        "month", "content", "size", "last_modified", "key", "URL",
+        "Downloaded", "Extracted", "Processed"
+    ])
     empty_df["Downloaded"] = "✖"
     empty_df["Extracted"] = "✖"
     empty_df["Processed"] = "✖"
@@ -1819,9 +1760,11 @@ def main():
     # Use the "darkly" theme for a dark appearance
     app = ttk.Window("Discogs Data Processor", themename="darkly")
     primary_color = app.style.colors.primary
-    app.iconphoto(True, ttk.PhotoImage(file="assets/app_icon.png"))
 
-
+    # Uygulamanın ikonu için yine BASE_DIR kullanıyoruz:
+    icon_path = BASE_DIR / "assets" / "app_icon.png"
+    if icon_path.exists():
+        app.iconphoto(True, ttk.PhotoImage(file=icon_path))
 
     # Optionally, if you want Treeview heading text to be white on dark:
     style = ttk.Style()
