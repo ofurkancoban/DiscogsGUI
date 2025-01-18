@@ -716,7 +716,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         self.style.configure(
             "Treeview.Heading",
             padding=(0, 11),
-            font=("Arial", 9)
+            font=("Arial", 13, "bold")
         )
         right_panel.columnconfigure(0, weight=1)
         right_panel.rowconfigure(0, weight=1)
