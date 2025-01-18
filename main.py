@@ -670,8 +670,10 @@ class DiscogsDataProcessorUI(ttk.Frame):
         if 'avatar' in self.photoimages:
             lbl = ttk.Label(left_panel, image='avatar', style='bg.TLabel')
         else:
-            lbl = ttk.Label(left_panel, text="Avatar", style='bg.TLabel')
-        lbl.pack(side='top', anchor='center', pady=0)
+            lbl = ttk.Label(left_panel, text="Avatar", scyle='bg.TLabel')
+        lbl_name = ttk.Label(left_panel, text="ofurkancoban", style='bg.TLabel')
+        lbl_name.pack(side='bottom', anchor='center', pady=2)
+        lbl.pack(side='top', anchor='center', pady=10)
 
         #######################################################################
         # RIGHT PANEL
