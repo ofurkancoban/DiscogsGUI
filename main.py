@@ -1626,6 +1626,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
           - Started at ve Elapsed değerlerini günceller
           - Her seçilen dosyayı chunk edip CSV'ye çevirir
           - 'File:' etiketinde dönüştürülen XML'in adını gösterir
+          - Dönüşüm bittiğinde extraction'daki gibi popup gösterir
         """
         from queue import Queue, Empty
         import time
@@ -1652,6 +1653,8 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
         def convert_thread():
             """Arka planda chunk+convert işlemlerini yapar, UI güncellemeleri için queue mesajları yollar."""
+            converted_files = []  # Successfully converted CSVs
+
             try:
                 for item in checked_items:
                     # Treeview'dan değerleri al
@@ -1687,15 +1690,17 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
                     # .gz -> .xml (aynı isim, uzantı .xml)
                     extracted_file = (
-                            Path(self.download_dir_var.get()) / "Datasets" / folder_name / filename
-                    ).with_suffix("")  # Örnek: discogs_2023-01-01_releases.xml
+                            Path(self.download_dir_var.get())
+                            / "Datasets"
+                            / folder_name
+                            / filename
+                    ).with_suffix("")  # e.g. discogs_2023-01-01_releases.xml
 
-                    # Dosya yoksa atla
                     if not extracted_file.exists():
                         self.log_to_console(f"Extracted XML not found: {extracted_file}", "ERROR")
                         continue
 
-                    # 2) UI'ya File: ... güncellemesi
+                    # 2) UI'ya "File: ..." güncellemesi
                     progress_queue.put(('file_change', extracted_file.name))
 
                     # 3) Chunking aşamasına geçtiğimizi bildirelim
@@ -1743,6 +1748,9 @@ class DiscogsDataProcessorUI(ttk.Frame):
                         self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✔"
                         self.log_to_console(f"Successfully created {combined_csv}", "INFO")
 
+                        # Bu dosya başarıyla dönüştürülmüş
+                        converted_files.append(combined_csv)
+
                     except Exception as e:
                         self.log_to_console(f"Error converting {extracted_file}: {e}", "ERROR")
 
@@ -1751,9 +1759,10 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
             except Exception as e:
                 self.log_to_console(f"Error in convert_thread: {e}", "ERROR")
+
             finally:
-                # En sonda 'done'
-                progress_queue.put(('done', None))
+                # En sonda 'done' mesajı iletiliyor
+                progress_queue.put(('done', converted_files))
 
         # Thread başlat
         th = Thread(target=convert_thread, daemon=True)
@@ -1761,7 +1770,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
         # 4) Thread bitene kadar UI'yı güncel tut
         while th.is_alive():
-            # a) Kalan mesajları al
+            # a) Kuyruktan gelen mesajları al
             try:
                 while True:
                     msg_type, value = progress_queue.get_nowait()
@@ -1770,12 +1779,10 @@ class DiscogsDataProcessorUI(ttk.Frame):
                         self.prog_current_file_var.set(f"File: {value}")
 
                     elif msg_type == 'chunking_start':
-                        # Chunk başlıyor, %0
                         self.prog_message_var.set("Chunking in progress...")
                         self.pb["value"] = 0
 
                     elif msg_type == 'chunking_done':
-                        # Artık chunk bitti, CSV'ye geçiyoruz
                         self.prog_message_var.set("Starting conversion...")
                         self.pb["value"] = 0
 
@@ -1784,30 +1791,22 @@ class DiscogsDataProcessorUI(ttk.Frame):
                         self.prog_message_var.set(f"Converting: {value:.1f}%")
 
                     elif msg_type == 'done':
-
-                        self.show_centered_popup(
-
-                            "Conversion Completed",
-
-                            "All selected files were successfully converted.",
-
-                            "info"
-
-                        )
-
-                    elif msg_type == 'error':
-
-                        self.show_centered_popup(
-
-                            "Conversion Error",
-
-                            value,
-
-                            "error"
-
-                        )
-                        pass
-
+                        # If 'done' arrives before thread ends, handle it now
+                        converted_files = value
+                        if converted_files:
+                            last_file = converted_files[-1].name
+                            self.show_centered_popup(
+                                "Conversion Completed",
+                                f"{last_file} successfully converted\n"
+                                f"({len(converted_files)} file(s) total.)",
+                                "info"
+                            )
+                        else:
+                            self.show_centered_popup(
+                                "Conversion Completed",
+                                "No files were converted",
+                                "info"
+                            )
             except Empty:
                 pass
 
@@ -1822,15 +1821,37 @@ class DiscogsDataProcessorUI(ttk.Frame):
             self.update()
             time.sleep(0.05)
 
-        # Thread gerçekten tamamlandı, son mesajları bir kez daha çekelim
+        # Thread gerçekten tamamlandı,
+        # bir de geriye kalan mesajları (özellikle 'done') yakalayalım
         try:
             while True:
                 msg_type, value = progress_queue.get_nowait()
-                if msg_type == 'conversion_progress':
+
+                if msg_type == 'file_change':
+                    self.prog_current_file_var.set(f"File: {value}")
+
+                elif msg_type == 'conversion_progress':
                     self.pb["value"] = value
                     self.prog_message_var.set(f"Converting: {value:.1f}%")
-                elif msg_type == 'file_change':
-                    self.prog_current_file_var.set(f"File: {value}")
+
+                elif msg_type == 'done':
+                    # If 'done' arrives AFTER the thread is no longer alive, handle it here
+                    converted_files = value
+                    if converted_files:
+                        last_file = converted_files[-1].name
+                        self.show_centered_popup(
+                            "Conversion Completed",
+                            f"{last_file} successfully converted\n"
+                            f"({len(converted_files)} file(s) total.)",
+                            "info"
+                        )
+                    else:
+                        self.show_centered_popup(
+                            "Conversion Completed",
+                            "No files were converted",
+                            "info"
+                        )
+
         except Empty:
             pass
 
