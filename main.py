@@ -293,7 +293,7 @@ def convert_chunked_files_to_csv(
         update_columns_from_chunk(cf, all_columns, record_tag=record_tag, logger=logger)
         current_step += 1
 
-        # Her chunk’ten sonra callback ile progress bar güncelle
+        # Her chunk'ten sonra callback ile progress bar güncelle
         if progress_cb:
             progress_cb(current_step, total_steps)
 
@@ -412,50 +412,23 @@ class CollapsingFrame(ttk.Frame):
         super().__init__(master, **kwargs)
         self.columnconfigure(0, weight=1)
         self.cumulative_rows = 0
-        try:
-            self.images = [
-                ttk.PhotoImage(file=PATH / 'icons8-double-up-30.png'),
-                ttk.PhotoImage(file=PATH / 'icons8-double-right-30.png')
-            ]
-        except Exception as e:
-            print(f"[ERROR] Failed to load collapsing frame images: {e}")
-            self.images = [None, None]
 
     def add(self, child, title="", bootstyle=PRIMARY, **kwargs):
         if child.winfo_class() != 'TFrame':
             return
-        frm = ttk.Frame(self, bootstyle=bootstyle)
-        frm.grid(row=self.cumulative_rows, column=0, sticky=EW)
+        # Create the header frame with a fixed height
+        frm = ttk.Frame(self, bootstyle=bootstyle, height=43)  # Set fixed height for grey background
+        frm.grid(row=self.cumulative_rows, column=0, sticky=EW, pady=(0, 0))
+        frm.grid_propagate(False)  # Prevent the frame from shrinking to fit content
+        
         header = ttk.Label(master=frm, text=title, bootstyle=(bootstyle, INVERSE))
         if kwargs.get('textvariable'):
             header.configure(textvariable=kwargs.get('textvariable'))
-        header.pack(side=LEFT, fill=BOTH, padx=10)
-
-        def _func(c=child):
-            return self._toggle_open_close(c)
-
-        if self.images[0] and self.images[1]:
-            btn = ttk.Button(master=frm, image=self.images[0], bootstyle=bootstyle, command=_func)
-        else:
-            btn = ttk.Button(master=frm, text='Toggle', bootstyle=bootstyle, command=_func)
-        btn.pack(side=RIGHT)
-        child.btn = btn
-        child.grid(row=self.cumulative_rows + 1, column=0, sticky=NSEW)
+        # Center the label vertically in the frame
+        header.place(relx=0, rely=0.5, x=10, anchor='w')
+        
+        child.grid(row=self.cumulative_rows + 1, column=0, sticky=NSEW, pady=(0, 0))
         self.cumulative_rows += 2
-
-    def _toggle_open_close(self, child):
-        if child.winfo_viewable():
-            child.grid_remove()
-            if self.images[1]:
-                child.btn.configure(image=self.images[1])
-            else:
-                child.btn.configure(text='Expand')
-        else:
-            child.grid()
-            if self.images[0]:
-                child.btn.configure(image=self.images[0])
-            else:
-                child.btn.configure(text='Collapse')
 
 
 class DiscogsDataProcessorUI(ttk.Frame):
@@ -464,7 +437,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
         self.pack(fill=BOTH, expand=YES)
         self.data_df = data_df
         self.stop_flag = False
-
         # [UPDATED] New variable: Download folder (default: ~/Downloads/Discogs)
         default_download_dir = Path.home() / "Downloads" / "Discogs"
         self.download_dir_var = StringVar(value=str(default_download_dir))  # Use StringVar
@@ -611,14 +583,14 @@ class DiscogsDataProcessorUI(ttk.Frame):
         #######################################################################
         # LEFT PANEL
         #######################################################################
-        left_panel = ttk.Frame(self, style='bg.TFrame', width=250)
+        left_panel = ttk.Frame(self, style='bg.TFrame', width=260)
         left_panel.pack(side=LEFT, fill=BOTH, expand=True)  # fill ve expand ekleniyor
         left_panel.pack_propagate(False)
 
         ds_cf = CollapsingFrame(left_panel)
         ds_cf.pack(fill=BOTH, expand=True, pady=1)
 
-        ds_frm = ttk.Frame(ds_cf, padding=5)
+        ds_frm = ttk.Frame(ds_cf, padding=0)
         ds_frm.columnconfigure(0, weight=1)  # İlk sütun genişleyebilir
         ds_frm.rowconfigure(0, weight=1)  # İlk satır genişleyebilir
         ds_cf.add(child=ds_frm, title='Data Summary', bootstyle=SECONDARY)
@@ -636,22 +608,18 @@ class DiscogsDataProcessorUI(ttk.Frame):
         lbl = ttk.Label(ds_frm, textvariable=self.downloaded_size_var)
         lbl.grid(row=3, column=0, sticky=W, padx=0, pady=2)
 
-        sep = ttk.Separator(ds_frm, bootstyle=SECONDARY)
-        sep.grid(row=4, column=0, columnspan=2, pady=5, sticky=EW)
-
         _func = self.open_discogs_folder
         open_btn = ttk.Button(ds_frm, text='Open Folder', command=_func,
                               image='opened-folder', compound=LEFT)
         open_btn.grid(row=5, column=0, columnspan=2, sticky=EW)
 
-        sep = ttk.Separator(ds_frm, bootstyle=SECONDARY)
-        sep.grid(row=6, column=0, columnspan=2, pady=5, sticky=EW)
+
 
         # Status panel
         status_cf = CollapsingFrame(left_panel)
         status_cf.pack(fill=BOTH, expand=True, pady=1)  # Sol paneli doldur
 
-        status_frm = ttk.Frame(status_cf, padding=5)
+        status_frm = ttk.Frame(status_cf, padding=0)
         status_frm.columnconfigure(0, weight=1)
         status_cf.add(child=status_frm, title='Status', bootstyle=SECONDARY)
 
@@ -683,16 +651,13 @@ class DiscogsDataProcessorUI(ttk.Frame):
         lbl.grid(row=6, column=0, columnspan=2, sticky=EW, pady=2)
         self.prog_time_left_var.set('Left: 0 sec')
 
-        sep = ttk.Separator(status_frm, bootstyle=SECONDARY)
-        sep.grid(row=7, column=0, columnspan=2, pady=5, sticky=EW)
+
 
 
 
         stop_btn = ttk.Button(status_frm, command=self.stop_download, image='stop', text='Stop Download', compound=LEFT)
-        stop_btn.grid(row=8, column=0, columnspan=2, sticky=EW)
+        stop_btn.grid(row=7, column=0, columnspan=2, sticky=EW)
 
-        sep = ttk.Separator(status_frm, bootstyle=SECONDARY)
-        sep.grid(row=9, column=0, columnspan=2, pady=0, sticky=EW)
         lbl_name = ttk.Label(left_panel, text="ofurkancoban", style='bg.TLabel')
         lbl_name.pack(side='bottom', anchor='center', pady=2)  # Alt tarafa yerleşim
 
@@ -1368,7 +1333,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
             self.show_centered_popup(
                 "Download Complete",
-                f"{filename} successfully downloaded",
+                f"{filename} successfully downloaded!",
                 "info"
             )
 
@@ -1797,14 +1762,13 @@ class DiscogsDataProcessorUI(ttk.Frame):
                             last_file = converted_files[-1].name
                             self.show_centered_popup(
                                 "Conversion Completed",
-                                f"{last_file} successfully converted\n"
-                                f"({len(converted_files)} file(s) total.)",
+                                f"{last_file} successfully converted!",
                                 "info"
                             )
                         else:
                             self.show_centered_popup(
-                                "Conversion Completed",
-                                "No files were converted",
+                                "Conversion Completed!",
+                                "No files were converted!",
                                 "info"
                             )
             except Empty:
