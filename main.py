@@ -595,17 +595,17 @@ class DiscogsDataProcessorUI(ttk.Frame):
         ds_frm.rowconfigure(0, weight=1)  # İlk satır genişleyebilir
         ds_cf.add(child=ds_frm, title='Data Summary', bootstyle=SECONDARY)
 
-        lbl = ttk.Label(ds_frm, text='Download Folder:')
+        lbl = ttk.Label(ds_frm, text='Download Folder:', padding=(10, 0))  # Added left padding
         lbl.grid(row=0, column=0, sticky=W, pady=2)
 
-        self.download_folder_label = ttk.Label(ds_frm, textvariable=self.download_dir_var)
+        self.download_folder_label = ttk.Label(ds_frm, textvariable=self.download_dir_var, padding=(10, 0))  # Added left padding
         self.download_folder_label.grid(row=1, column=0, sticky=W, padx=0, pady=2)
 
-        lbl = ttk.Label(ds_frm, text='Size of Downloaded Files:')
+        lbl = ttk.Label(ds_frm, text='Size of Downloaded Files:', padding=(10, 0))  # Added left padding
         lbl.grid(row=2, column=0, sticky=W, pady=2)
 
         self.downloaded_size_var = StringVar(value="Calculating...")
-        lbl = ttk.Label(ds_frm, textvariable=self.downloaded_size_var)
+        lbl = ttk.Label(ds_frm, textvariable=self.downloaded_size_var, padding=(10, 0))  # Added left padding
         lbl.grid(row=3, column=0, sticky=W, padx=0, pady=2)
 
         _func = self.open_discogs_folder
@@ -623,7 +623,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         status_frm.columnconfigure(0, weight=1)
         status_cf.add(child=status_frm, title='Status', bootstyle=SECONDARY)
 
-        lbl = ttk.Label(status_frm, textvariable=self.prog_message_var, font='Arial 10 bold')
+        lbl = ttk.Label(status_frm, textvariable=self.prog_message_var, font='Arial 11 bold', padding=(10, 10))  # Increased font size and added top padding
         lbl.grid(row=0, column=0, columnspan=2, sticky=W)
         self.prog_message_var.set('Idle...')
 
@@ -632,22 +632,22 @@ class DiscogsDataProcessorUI(ttk.Frame):
         self.pb = pb  # Keep reference to progress bar
 
         self.prog_current_file_var = StringVar(value="File: none")
-        lbl = ttk.Label(status_frm, textvariable=self.prog_current_file_var)
+        lbl = ttk.Label(status_frm, textvariable=self.prog_current_file_var, padding=(10, 0))  # Added left padding
         lbl.grid(row=2, column=0, columnspan=2, sticky=EW, pady=2)
 
-        lbl = ttk.Label(status_frm, textvariable=self.prog_time_started_var)
+        lbl = ttk.Label(status_frm, textvariable=self.prog_time_started_var, padding=(10, 0))  # Added left padding
         lbl.grid(row=3, column=0, columnspan=2, sticky=EW, pady=2)
         self.prog_time_started_var.set('Not started')
 
-        lbl = ttk.Label(status_frm, textvariable=self.prog_speed_var)
+        lbl = ttk.Label(status_frm, textvariable=self.prog_speed_var, padding=(10, 0))  # Added left padding
         lbl.grid(row=4, column=0, columnspan=2, sticky=EW, pady=2)
         self.prog_speed_var.set('Speed: 0.00 MB/s')
 
-        lbl = ttk.Label(status_frm, textvariable=self.prog_time_elapsed_var)
+        lbl = ttk.Label(status_frm, textvariable=self.prog_time_elapsed_var, padding=(10, 0))  # Added left padding
         lbl.grid(row=5, column=0, columnspan=2, sticky=EW, pady=2)
         self.prog_time_elapsed_var.set('Elapsed: 0 sec')
 
-        lbl = ttk.Label(status_frm, textvariable=self.prog_time_left_var)
+        lbl = ttk.Label(status_frm, textvariable=self.prog_time_left_var, padding=(10, 0))  # Added left padding
         lbl.grid(row=6, column=0, columnspan=2, sticky=EW, pady=2)
         self.prog_time_left_var.set('Left: 0 sec')
 
