@@ -628,7 +628,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         self.prog_message_var.set('Idle...')
 
         pb = ttk.Progressbar(status_frm,length=245, mode="determinate", bootstyle=SUCCESS)
-        pb.grid(row=1, column=0, columnspan=2, sticky=EW, pady=(5, 5))
+        pb.grid(row=1, column=0, columnspan=2, sticky=EW, pady=(5, 5), padx=10)  # Added padx=10 for left/right padding
         self.pb = pb  # Keep reference to progress bar
 
         self.prog_current_file_var = StringVar(value="File: none")
