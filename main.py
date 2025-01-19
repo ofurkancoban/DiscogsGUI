@@ -583,7 +583,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         #######################################################################
         # LEFT PANEL
         #######################################################################
-        left_panel = ttk.Frame(self, style='bg.TFrame', width=260)
+        left_panel = ttk.Frame(self, style='bg.TFrame', width=250)
         left_panel.pack(side=LEFT, fill=BOTH, expand=True)  # fill ve expand ekleniyor
         left_panel.pack_propagate(False)
 
@@ -1805,8 +1805,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                         last_file = converted_files[-1].name
                         self.show_centered_popup(
                             "Conversion Completed",
-                            f"{last_file} successfully converted\n"
-                            f"({len(converted_files)} file(s) total.)",
+                            f"{last_file} successfully converted!",
                             "info"
                         )
                     else:
