@@ -655,7 +655,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
 
 
-        stop_btn = ttk.Button(status_frm, command=self.stop_download, image='stop', text='Stop Download', compound=LEFT)
+        stop_btn = ttk.Button(status_frm, command=self.stop_download, image='stop', text='Stop', compound=LEFT)
         stop_btn.grid(row=7, column=0, columnspan=2, sticky=EW)
 
         lbl_name = ttk.Label(left_panel, text="ofurkancoban", style='bg.TLabel')
@@ -1127,16 +1127,30 @@ class DiscogsDataProcessorUI(ttk.Frame):
         return data_df
 
     def start_download(self, url, filename, last_modified):
+        """Initiates the download process with logging."""
         self.stop_flag = False
         folder_name = last_modified.strftime("%Y-%m")
+        
+        # Log download start information
+        self.log_to_console(f"Starting download of {filename}", "INFO")
+        self.log_to_console(f"Destination folder: {folder_name}", "INFO")
+        self.log_to_console(f"Source URL: {url}", "INFO")
+        self.log_to_console("Download method: Multi-threaded (8 threads)", "INFO")
+        
         Thread(target=self.download_file, args=(url, filename, folder_name), daemon=True).start()
 
     def parallel_download(self, url, filename, folder_name, total_size):
+        """Multi-threaded download implementation."""
         downloads_dir = Path(self.download_dir_var.get()) / "Datasets"
         target_dir = downloads_dir / folder_name
         target_dir.mkdir(parents=True, exist_ok=True)
         file_path = target_dir / filename
 
+        # Log download details
+        human_size = human_readable_size(total_size)
+        self.log_to_console(f"File size: {human_size}", "INFO")
+        self.log_to_console(f"Target path: {file_path}", "INFO")
+        
         self.prog_current_file_var.set(f"File: {filename}")
 
         num_threads = 8
@@ -1276,7 +1290,10 @@ class DiscogsDataProcessorUI(ttk.Frame):
             self.after(100, self.handle_download_status, q)
 
     def single_thread_download(self, url, filename, folder_name):
-        self.log_to_console("Partial downloads not supported. Using single-threaded download.", "INFO")
+        """Single-threaded download implementation."""
+        self.log_to_console("Switching to single-threaded download", "INFO")
+        self.log_to_console("Reason: Server doesn't support partial downloads", "INFO")
+        
         downloads_dir = Path(self.download_dir_var.get()) / "Datasets"
         target_dir = downloads_dir / folder_name
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -1285,6 +1302,12 @@ class DiscogsDataProcessorUI(ttk.Frame):
         try:
             response = requests.get(url, stream=True)
             total_size = int(response.headers.get('content-length', 0))
+            human_size = human_readable_size(total_size)
+            
+            # Log download details
+            self.log_to_console(f"File size: {human_size}", "INFO")
+            self.log_to_console(f"Target path: {file_path}", "INFO")
+            
             block_size = 1024 * 64
             self.pb["value"] = 0
             self.pb["maximum"] = total_size
@@ -1341,9 +1364,41 @@ class DiscogsDataProcessorUI(ttk.Frame):
             ...
 
     def stop_download(self):
-        """Sets the stop flag to True to halt operations."""
+        """Sets the stop flag to True to halt operations and cleans up any partial files."""
         self.stop_flag = True
         self.log_to_console("Operation Stopped. Cleaning up...", "WARNING")
+        self.prog_message_var.set('Stopping...')
+        
+        # Clean up any partial download files
+        downloads_dir = Path(self.download_dir_var.get()) / "Datasets"
+        if downloads_dir.exists():
+            for folder in downloads_dir.glob("*"):
+                if folder.is_dir():
+                    # Clean up chunk folders
+                    chunk_folders = list(folder.glob("chunked_*"))
+                    for chunk_folder in chunk_folders:
+                        try:
+                            shutil.rmtree(chunk_folder)
+                            self.log_to_console(f"Cleaned up chunk folder: {chunk_folder}", "INFO")
+                        except Exception as e:
+                            self.log_to_console(f"Error cleaning up {chunk_folder}: {e}", "ERROR")
+                    
+                    # Clean up partial files
+                    for file in folder.glob("*"):
+                        if file.name.endswith(('.part*', '.tmp')):
+                            try:
+                                file.unlink()
+                                self.log_to_console(f"Cleaned up partial file: {file}", "INFO")
+                            except Exception as e:
+                                self.log_to_console(f"Error cleaning up {file}: {e}", "ERROR")
+
+        self.prog_message_var.set('Idle...')
+        self.pb["value"] = 0
+        self.prog_current_file_var.set("File: none")
+        self.prog_speed_var.set("Speed: 0.00 MB/s")
+        self.prog_time_left_var.set("Left: 0 sec")
+        self.prog_time_elapsed_var.set("Elapsed: 0 sec")
+        self.prog_time_started_var.set("Not started")
 
     def download_selected(self):
         checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
@@ -1388,7 +1443,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         import queue
 
         try:
-            output_path = file_path.with_suffix('')
+            output_path = file_path.with_suffix('')  # This is the XML file path
             # GZ'li dosyanın boyutu (sıkıştırılmış boyut)
             total_size = file_path.stat().st_size
 
@@ -1401,8 +1456,15 @@ class DiscogsDataProcessorUI(ttk.Frame):
             def extract_worker():
                 try:
                     import gzip
-                    with gzip.open(file_path, 'rb') as f_in, open(output_path, 'wb') as f_out:
+                    # First, create a temporary XML file
+                    temp_output_path = output_path.with_suffix('.xml.tmp')
+                    
+                    with gzip.open(file_path, 'rb') as f_in, open(temp_output_path, 'wb') as f_out:
                         while True:
+                            if self.stop_flag:  # Check stop flag
+                                progress_queue.put(('stopped', None))
+                                return
+                                
                             chunk = f_in.read(1024 * 1024)  # 1 MB
                             if not chunk:
                                 break
@@ -1413,6 +1475,9 @@ class DiscogsDataProcessorUI(ttk.Frame):
                             percent = (compressed_pos / total_size) * 100 if total_size else 0
                             progress_queue.put(('progress', percent))
 
+                    # Only rename to final XML if extraction completes successfully
+                    if temp_output_path.exists():
+                        temp_output_path.rename(output_path)
                     progress_queue.put(('done', None))
                 except Exception as e:
                     progress_queue.put(('error', str(e)))
@@ -1422,7 +1487,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 Kuyruktan gelen mesajlara göre progress bar ve mesajları günceller,
                 her döngüde geçen süreyi (Elapsed) hesaplar.
                 """
-                # 1) Kuyruktan gelen ilerleme mesajlarını işleme
                 try:
                     while True:
                         msg_type, value = progress_queue.get_nowait()
@@ -1432,17 +1496,29 @@ class DiscogsDataProcessorUI(ttk.Frame):
                         elif msg_type == 'done':
                             self.pb["value"] = 100
                             self.prog_message_var.set('Extraction completed')
+                        elif msg_type == 'stopped':
+                            self.pb["value"] = 0
+                            self.prog_message_var.set('Extraction stopped')
+                            # Delete both temporary and final XML files if they exist
+                            temp_output_path = output_path.with_suffix('.xml.tmp')
+                            if temp_output_path.exists():
+                                try:
+                                    temp_output_path.unlink()
+                                    self.log_to_console(f"Deleted temporary file: {temp_output_path}", "INFO")
+                                except Exception as e:
+                                    self.log_to_console(f"Error deleting temporary file: {e}", "ERROR")
+                            if output_path.exists():
+                                try:
+                                    output_path.unlink()
+                                    self.log_to_console(f"Deleted incomplete XML file: {output_path}", "INFO")
+                                except Exception as e:
+                                    self.log_to_console(f"Error deleting XML file: {e}", "ERROR")
+                            return False
                         elif msg_type == 'error':
                             self.log_to_console(f"Error extracting {file_path}: {value}", "ERROR")
                 except queue.Empty:
                     pass
-
-                # 2) Elapsed (geçen süre) güncellemesi
-                now = datetime.now()
-                elapsed = (now - start_time).total_seconds()
-                minutes = int(elapsed) // 60
-                seconds = int(elapsed) % 60
-                self.prog_time_elapsed_var.set(f"Elapsed: {minutes} min {seconds} sec")
+                return True
 
             # Asıl işi yapacak thread
             extract_thread = Thread(target=extract_worker)
@@ -1454,14 +1530,34 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
             # Ana loop: join() yerine canlı döngüyle UI güncelle
             while extract_thread.is_alive():
-                update_progress()
+                if self.stop_flag:  # Check stop flag in main loop
+                    break
+                if not update_progress():  # If stopped via progress update
+                    break
                 self.update()  # Tkinter arayüzünü donmadan güncel tut
                 time.sleep(0.01)
 
             # Son kalan mesajları (done/error) al
-            update_progress()
-
-            return True
+            if not self.stop_flag:
+                update_progress()
+                return True
+            else:
+                # Additional cleanup when stopped
+                temp_output_path = output_path.with_suffix('.xml.tmp')
+                if temp_output_path.exists():
+                    try:
+                        temp_output_path.unlink()
+                        self.log_to_console(f"Deleted temporary file: {temp_output_path}", "INFO")
+                    except Exception as e:
+                        self.log_to_console(f"Error deleting temporary file: {e}", "ERROR")
+                if output_path.exists():
+                    try:
+                        output_path.unlink()
+                        self.log_to_console(f"Deleted incomplete XML file: {output_path}", "INFO")
+                    except Exception as e:
+                        self.log_to_console(f"Error deleting XML file: {e}", "ERROR")
+                self.log_to_console(f"Extraction stopped for {file_path.name}", "WARNING")
+                return False
 
         except Exception as e:
             self.log_to_console(f"Error extracting {file_path}: {e}", "ERROR")
@@ -1478,6 +1574,10 @@ class DiscogsDataProcessorUI(ttk.Frame):
         self.after(2000, self.extract_selected_thread)
 
     def extract_selected_thread(self):
+        """Extract selected files."""
+        # Add stop_flag check at the start
+        self.stop_flag = False
+        
         try:
             self.prog_message_var.set('Extracting now...')
             extracted_files = []
@@ -1489,6 +1589,27 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 return
 
             for item in checked_items:
+                if self.stop_flag:
+                    self.log_to_console("Extraction stopped by user", "WARNING")
+                    # Clean up any partial files
+                    downloads_dir = Path(self.download_dir_var.get()) / "Datasets"
+                    if downloads_dir.exists():
+                        for folder in downloads_dir.glob("*"):
+                            if folder.is_dir():
+                                # Clean up XML and temporary files
+                                for file in folder.glob("*.xml*"):
+                                    try:
+                                        file.unlink()
+                                        self.log_to_console(f"Deleted file: {file}", "INFO")
+                                    except Exception as e:
+                                        self.log_to_console(f"Error deleting file {file}: {e}", "ERROR")
+                
+                    # Reset UI elements
+                    self.pb["value"] = 0
+                    self.prog_message_var.set('Idle...')
+                    self.prog_current_file_var.set("File: none")
+                    return
+
                 values = self.tree.item(item, "values")
                 month_val = values[1]
                 content_val = values[2]
@@ -1529,6 +1650,16 @@ class DiscogsDataProcessorUI(ttk.Frame):
                         else:
                             failed_files.append(file_path)
                             self.log_to_console(f"Error or stopped extracting {file_path}.", "ERROR")
+                            # Clean up any partial XML files
+                            output_path = file_path.with_suffix('')
+                            temp_path = output_path.with_suffix('.xml.tmp')
+                            for cleanup_path in [output_path, temp_path]:
+                                if cleanup_path.exists():
+                                    try:
+                                        cleanup_path.unlink()
+                                        self.log_to_console(f"Cleaned up: {cleanup_path}", "INFO")
+                                    except Exception as e:
+                                        self.log_to_console(f"Error cleaning up {cleanup_path}: {e}", "ERROR")
                     else:
                         if file_path.exists() and file_path.suffix.lower() == ".xml":
                             self.log_to_console(f"File {file_path} is already .xml; no extraction needed.", "INFO")
@@ -1543,16 +1674,17 @@ class DiscogsDataProcessorUI(ttk.Frame):
             if failed_files:
                 self.log_to_console(f"Failed to extract files: {', '.join(map(str, failed_files))}", "WARNING")
 
-            if extracted_files:
-                filename = extracted_files[-1].name
-                message = f"{filename} successfully extracted"
-            else:
-                message = "No files were extracted"
-            self.after(0, lambda: self.show_centered_popup(
-                "Extraction Completed",
-                message,
-                "info"
-            ))
+            if not self.stop_flag:
+                if extracted_files:
+                    filename = extracted_files[-1].name
+                    message = f"{filename} successfully extracted"
+                else:
+                    message = "No files were extracted"
+                self.after(0, lambda: self.show_centered_popup(
+                    "Extraction Completed",
+                    message,
+                    "info"
+                ))
 
         except Exception as e:
             self.log_to_console(f"Error during extraction: {e}", "ERROR")
@@ -1585,14 +1717,10 @@ class DiscogsDataProcessorUI(ttk.Frame):
     #                           CONVERT SELECTED
     ###########################################################################
     def convert_selected(self):
-        """
-        Convert (XML→CSV) işlemini başlatır:
-          - Preparing... mesajı
-          - Started at ve Elapsed değerlerini günceller
-          - Her seçilen dosyayı chunk edip CSV'ye çevirir
-          - 'File:' etiketinde dönüştürülen XML'in adını gösterir
-          - Dönüşüm bittiğinde extraction'daki gibi popup gösterir
-        """
+        """Convert (XML→CSV) işlemini başlatır."""
+        # Add stop_flag check at the start
+        self.stop_flag = False
+        
         from queue import Queue, Empty
         import time
         from datetime import datetime
@@ -1622,6 +1750,18 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
             try:
                 for item in checked_items:
+                    if self.stop_flag:
+                        self.log_to_console("Conversion stopped by user", "WARNING")
+                        # Clean up any partial files
+                        for chunk_folder in Path(self.download_dir_var.get()).rglob("chunked_*"):
+                            if chunk_folder.is_dir():
+                                try:
+                                    shutil.rmtree(chunk_folder)
+                                    self.log_to_console(f"Cleaned up chunk folder: {chunk_folder}", "INFO")
+                                except Exception as e:
+                                    self.log_to_console(f"Error cleaning up {chunk_folder}: {e}", "ERROR")
+                        return
+                    
                     # Treeview'dan değerleri al
                     values = self.tree.item(item, "values")
                     month_val = values[1]
