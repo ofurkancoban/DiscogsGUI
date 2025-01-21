@@ -20,7 +20,7 @@ from ttkbootstrap.constants import *
 from tkinter import messagebox
 from tkinter import StringVar  # Import StringVar
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 ###############################################################################
 #                          File-Type → XML Tag Mapping
@@ -984,71 +984,104 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 cb.place_forget()
 
     def delete_selected(self):
-        """
-        Delete the file(s) for downloaded, extracted,
-        and processed if applicable from disk,
-        then set all states to ✖.
-        """
+        """Delete selected files and their related files (gz, xml, csv)."""
         checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
         if not checked_items:
-            messagebox.showwarning("Warning", "No file selected!")
+            self.log_to_console("No file selected for deletion!", "WARNING")
             return
 
-        confirm = messagebox.askyesno("Confirm Deletion",
-                                      "Are you sure you want to delete the selected file(s)?")
-        if not confirm:
+        # Ask for confirmation
+        count = len(checked_items)
+        if not messagebox.askyesno(
+            "Confirm Deletion",
+            f"Are you sure you want to delete {count} selected item(s) and all their related files?"
+        ):
             return
 
-        deleted_files = []
-        failed_files = []
+        # Keep track of all deleted files
+        all_deleted_files = []
+        deleted_folders = []
 
         for item in checked_items:
             values = self.tree.item(item, "values")
             month_val = values[1]
             content_val = values[2]
-            size_val = values[3]
-            downloaded_val = values[4]
-            extracted_val = values[5]
-            processed_val = values[6]
 
+            # Find the corresponding row in data_df
             row_data = self.data_df[
                 (self.data_df["month"] == month_val) &
-                (self.data_df["content"] == content_val) &
-                (self.data_df["size"] == size_val) &
-                (self.data_df["Downloaded"] == downloaded_val) &
-                (self.data_df["Extracted"] == extracted_val) &
-                (self.data_df["Processed"] == processed_val)
+                (self.data_df["content"] == content_val)
             ]
+
             if not row_data.empty:
                 url = row_data["URL"].values[0]
                 folder_name = row_data["month"].values[0]
                 filename = os.path.basename(url)
-                file_path = Path(self.download_dir_var.get()) / "Datasets" / folder_name / filename
+                base_path = Path(self.download_dir_var.get()) / "Datasets" / folder_name / filename
 
-                csv_path = file_path.with_suffix('.csv')
+                # Get the base name without any extensions
+                base_name = filename.split('.')[0]
+                
+                # List of all possible related files with full paths
+                related_files = [
+                    base_path,  # original .gz file
+                    base_path.with_suffix(''),  # file without extension
+                    base_path.with_suffix('.xml'),  # .xml file
+                    base_path.with_suffix('.xml.tmp'),  # temporary .xml file
+                    base_path.parent / f"{base_name}.csv"  # .csv file
+                ]
 
-                try:
+                # Delete chunk folder if it exists
+                chunk_folder = base_path.parent / f"chunked_{content_val}"
+                if chunk_folder.exists():
+                    try:
+                        shutil.rmtree(chunk_folder)
+                        deleted_folders.append(chunk_folder.name)
+                        self.log_to_console(f"Deleted chunk folder: {chunk_folder}", "INFO")
+                    except Exception as e:
+                        self.log_to_console(f"Error deleting chunk folder {chunk_folder}: {e}", "ERROR")
+
+                # Delete all related files
+                files_deleted = []
+                for file_path in related_files:
                     if file_path.exists():
-                        file_path.unlink()
-                        deleted_files.append(file_path)
-                    if csv_path.exists():
-                        csv_path.unlink()
-                        deleted_files.append(csv_path)
+                        try:
+                            file_path.unlink()
+                            files_deleted.append(file_path.name)
+                            all_deleted_files.append(file_path.name)
+                            self.log_to_console(f"Deleted file: {file_path}", "INFO")
+                        except Exception as e:
+                            self.log_to_console(f"Error deleting {file_path}: {e}", "ERROR")
 
-                    self.data_df.loc[self.data_df["URL"] == url, "Downloaded"] = "✖"
-                    self.data_df.loc[self.data_df["URL"] == url, "Extracted"] = "✖"
-                    self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✖"
-                except Exception as e:
-                    self.log_to_console(f"Error deleting files for {file_path}: {e}", "ERROR")
-                    failed_files.append(file_path)
+                # Reset status in data_df
+                self.data_df.loc[self.data_df["URL"] == url, "Downloaded"] = "✖"
+                self.data_df.loc[self.data_df["URL"] == url, "Extracted"] = "✖"
+                self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✖"
 
-        if deleted_files:
-            self.log_to_console(f"Deleted files: {', '.join(map(str, deleted_files))}", "INFO")
-        if failed_files:
-            self.log_to_console(f"Failed to delete: {', '.join(map(str, failed_files))}", "WARNING")
-
+        # Update the table display
         self.populate_table(self.data_df)
+        
+        # Update downloaded size
         self.update_downloaded_size()
+        
+        # Create detailed completion message
+        if all_deleted_files or deleted_folders:
+            completion_message = "Deletion Summary:\n"
+            if all_deleted_files:
+                completion_message += f"\nFiles deleted ({len(all_deleted_files)}):\n"
+                completion_message += "\n".join(f"- {file}" for file in all_deleted_files)
+            if deleted_folders:
+                completion_message += f"\n\nFolders deleted ({len(deleted_folders)}):\n"
+                completion_message += "\n".join(f"- {folder}" for folder in deleted_folders)
+            
+            # Log the detailed summary
+            self.log_to_console(completion_message, "INFO")
+            
+            # Show popup with summary
+            messagebox.showinfo("Deletion Complete", completion_message)
+        else:
+            self.log_to_console("No files were found to delete", "WARNING")
+            messagebox.showinfo("Deletion Complete", "No files were found to delete")
 
     def log_to_console(self, message, message_type="INFO"):
         """
@@ -1439,12 +1472,11 @@ class DiscogsDataProcessorUI(ttk.Frame):
         güncellenir.
         """
         import time
-        from datetime import datetime
+        from datetime import datetime, timedelta
         import queue
 
         try:
             output_path = file_path.with_suffix('')  # This is the XML file path
-            # GZ'li dosyanın boyutu (sıkıştırılmış boyut)
             total_size = file_path.stat().st_size
 
             progress_queue = queue.Queue()
@@ -1488,6 +1520,12 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 her döngüde geçen süreyi (Elapsed) hesaplar.
                 """
                 try:
+                    # Update elapsed time
+                    elapsed = datetime.now() - start_time
+                    mins = int(elapsed.total_seconds()) // 60
+                    secs = int(elapsed.total_seconds()) % 60
+                    self.prog_time_elapsed_var.set(f"Elapsed: {mins} min {secs} sec")
+
                     while True:
                         msg_type, value = progress_queue.get_nowait()
                         if msg_type == 'progress':
@@ -1535,11 +1573,16 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 if not update_progress():  # If stopped via progress update
                     break
                 self.update()  # Tkinter arayüzünü donmadan güncel tut
-                time.sleep(0.01)
+                time.sleep(0.1)  # Reduced update frequency to every 100ms
 
             # Son kalan mesajları (done/error) al
             if not self.stop_flag:
                 update_progress()
+                # Final elapsed time update
+                elapsed = datetime.now() - start_time
+                mins = int(elapsed.total_seconds()) // 60
+                secs = int(elapsed.total_seconds()) % 60
+                self.prog_time_elapsed_var.set(f"Elapsed: {mins} min {secs} sec")
                 return True
             else:
                 # Additional cleanup when stopped
