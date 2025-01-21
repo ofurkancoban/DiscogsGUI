@@ -1076,6 +1076,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
             
             # Log the detailed summary
             self.log_to_console(completion_message, "INFO")
+            self.log_to_console("Table updated.", "INFO")  # tablo bitti mesajı
             
             # Show popup with summary
             messagebox.showinfo("Deletion Complete", completion_message)
