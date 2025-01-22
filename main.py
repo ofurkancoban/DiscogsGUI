@@ -672,6 +672,8 @@ class DiscogsDataProcessorUI(ttk.Frame):
         stop_btn = ttk.Button(status_frm, command=self.stop_download, image='stop', text='Stop', compound=LEFT)
         stop_btn.grid(row=7, column=0, columnspan=2, sticky=EW)
 
+        lbl_ver = ttk.Label(left_panel, text="V.0.1", style='bg.TLabel')
+        lbl_ver.pack(side='bottom', anchor='center', pady=2)  # Alt tarafa yerleşim
         lbl_name = ttk.Label(left_panel, text="ofurkancoban", style='bg.TLabel')
         lbl_name.pack(side='bottom', anchor='center', pady=2)  # Alt tarafa yerleşim
 
