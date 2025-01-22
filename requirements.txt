@@ -1,0 +1,20 @@
+# UI Components
+ttkbootstrap>=1.10.1
+Pillow>=10.0.0  # Required for image handling in ttkbootstrap
+
+# Data Processing
+pandas>=2.0.0
+lxml>=4.9.3  # For XML processing
+numpy>=1.24.0  # Required by pandas
+
+# Network and File Operations
+requests>=2.31.0
+urllib3>=2.0.0
+certifi>=2023.7.22
+
+# Progress Tracking
+tqdm>=4.65.0
+
+# Optional but recommended for better performance
+python-snappy>=0.6.1  # For compression support
+pyarrow>=14.0.1  # For better pandas performance 
