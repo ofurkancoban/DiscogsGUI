@@ -248,7 +248,7 @@ def write_chunk_to_csv(chunk_file_path: Path, csv_writer: csv.DictWriter, all_co
         print(f"Written data from {chunk_file_path.name} to CSV.")
 
 def convert_progress_callback(self, current_step, total_steps):
-    """Convert işlemi (chunk bazlı) sırasında her chunk tamamlandığında çağrılır."""
+    """Called when each chunk is completed during the conversion process."""
     if total_steps == 0:
         percentage = 0
     else:
@@ -1641,11 +1641,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
         except Exception as e:
             self.log_to_console(f"Error extracting {file_path}: {e}", "ERROR")
             return False
-
-    def get_uncompressed_size(gz_file):
-        with open(gz_file, 'rb') as f:
-            f.seek(-4, 2)  # sondan 4 byte
-            return struct.unpack('<I', f.read(4))[0]
 
     def extract_selected(self):
         self.log_to_console("Extracting started...", "INFO")
