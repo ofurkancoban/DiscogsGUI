@@ -1100,7 +1100,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
     def log_to_console(self, message, message_type="INFO"):
         """
-        Logs a message to the console_text widget with timestamp and color coding.
+        Logs a message to the console_text widget and saves it to a log file.
         Every other line alternates between white and light blue.
         """
         self.console_text.config(state='normal')
@@ -1129,6 +1129,22 @@ class DiscogsDataProcessorUI(ttk.Frame):
         if len(message_content) > 80:
             message_content = message_content[:80] + '...'
         self.scroll_message_var.set(f"Log: {message_content}")
+
+        # Save log to file
+        try:
+            # Always save to the Discogs folder
+            log_path = Path(self.download_dir_var.get()) / "discogs_data.log"
+            
+            # Create parent directory if it doesn't exist
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+                
+            # Append the log message to the file
+            with open(log_path, 'a', encoding='utf-8') as f:
+                f.write(formatted_message)
+                
+        except Exception as e:
+            # If there's an error saving the log, print to console but don't raise the error
+            print(f"Error saving log to file: {e}")
 
     def mark_downloaded_files(self, data_df):
         """Ensure columns 'Downloaded', 'Extracted', 'Processed' exist, defaulting to ✖,
