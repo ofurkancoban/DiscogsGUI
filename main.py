@@ -440,6 +440,11 @@ class DiscogsDataProcessorUI(ttk.Frame):
         # [UPDATED] New variable: Download folder (default: ~/Downloads/Discogs)
         default_download_dir = Path.home() / "Downloads" / "Discogs"
         self.download_dir_var = StringVar(value=str(default_download_dir))  # Use StringVar
+        
+        # Add status indicator variables
+        self.status_indicator_visible = True
+        self.status_indicator_active = False
+        self.blink_after_id = None
 
         # Initialize StringVar variables for status
         self.prog_message_var = StringVar(value='Idle...')
@@ -623,13 +628,22 @@ class DiscogsDataProcessorUI(ttk.Frame):
         status_frm.columnconfigure(0, weight=1)
         status_cf.add(child=status_frm, title='Status', bootstyle=SECONDARY)
 
-        lbl = ttk.Label(status_frm, textvariable=self.prog_message_var, font='Arial 11 bold', padding=(10, 10))  # Increased font size and added top padding
-        lbl.grid(row=0, column=0, columnspan=2, sticky=W)
-        self.prog_message_var.set('Idle...')
+        # Create status header frame with indicator
+        status_header = ttk.Frame(status_frm)
+        status_header.grid(row=0, column=0, columnspan=2, sticky=W, pady=(10,5), padx=10)
+        
+        # Add status indicator canvas
+        self.status_indicator = ttk.Canvas(status_header, width=10, height=10)
+        self.status_indicator.pack(side=LEFT, padx=(0,5))
+        self.indicator_oval = self.status_indicator.create_oval(2, 2, 8, 8, fill='gray', outline='')
+        
+        # Status message next to indicator
+        lbl = ttk.Label(status_header, textvariable=self.prog_message_var, font='Arial 11 bold')
+        lbl.pack(side=LEFT)
 
-        pb = ttk.Progressbar(status_frm,length=245, mode="determinate", bootstyle=SUCCESS)
-        pb.grid(row=1, column=0, columnspan=2, sticky=EW, pady=(5, 5), padx=10)  # Added padx=10 for left/right padding
-        self.pb = pb  # Keep reference to progress bar
+        # Add progress bar back
+        self.pb = ttk.Progressbar(status_frm, bootstyle="success-striped")
+        self.pb.grid(row=1, column=0, columnspan=2, sticky=EW, padx=10, pady=5)
 
         self.prog_current_file_var = StringVar(value="File: none")
         lbl = ttk.Label(status_frm, textvariable=self.prog_current_file_var, padding=(10, 0))  # Added left padding
@@ -1257,7 +1271,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         return True
 
     def download_file(self, url, filename, folder_name):
-        file_path = None
+        self.start_status_indicator()  # Start blinking
         try:
             self.prog_message_var.set('Preparing download...')
             head = requests.head(url)
@@ -1309,6 +1323,8 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 f"Error during download:\n{str(e)}",
                 "error"
             ))
+
+        self.stop_status_indicator()  # Stop blinking when done
 
     def handle_download_status(self, q):
         try:
@@ -1398,6 +1414,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
             ...
 
     def stop_download(self):
+        self.stop_status_indicator()  # Stop blinking
         """Sets the stop flag to True to halt operations and cleans up any partial files."""
         self.stop_flag = True
         self.log_to_console("Operation Stopped. Cleaning up...", "WARNING")
@@ -1618,10 +1635,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         self.after(2000, self.extract_selected_thread)
 
     def extract_selected_thread(self):
-        """Extract selected files."""
-        # Add stop_flag check at the start
-        self.stop_flag = False
-        
+        self.start_status_indicator()  # Start blinking
         try:
             self.prog_message_var.set('Extracting now...')
             extracted_files = []
@@ -1738,6 +1752,8 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 "error"
             ))
 
+        self.stop_status_indicator()  # Stop blinking when done
+
     def show_centered_popup(self, title, message, message_type="info"):
         if message_type == "info":
             messagebox.showinfo(title, message, parent=self)
@@ -1761,165 +1777,218 @@ class DiscogsDataProcessorUI(ttk.Frame):
     #                           CONVERT SELECTED
     ###########################################################################
     def convert_selected(self):
-        """Convert (XML→CSV) işlemini başlatır."""
-        # Add stop_flag check at the start
-        self.stop_flag = False
-        
-        from queue import Queue, Empty
-        import time
-        from datetime import datetime
+        self.start_status_indicator()  # Start blinking
+        try:
+            """Convert (XML→CSV) işlemini başlatır."""
+            # Add stop_flag check at the start
+            self.stop_flag = False
+            
+            from queue import Queue, Empty
+            import time
+            from datetime import datetime
 
-        # Eğer hiçbir öğe seçilmemişse uyarı ver
-        checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
-        if not checked_items:
-            self.log_to_console("No file selected for conversion!", "WARNING")
-            return
+            # Eğer hiçbir öğe seçilmemişse uyarı ver
+            checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
+            if not checked_items:
+                self.log_to_console("No file selected for conversion!", "WARNING")
+                return
 
-        # 1) Ekranda başlangıç mesajları
-        self.log_to_console("Starting conversion...", "INFO")
-        start_time = datetime.now()
-        self.prog_time_started_var.set(f"Started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        self.prog_time_elapsed_var.set("Elapsed: 0 min 0 sec")
+            # 1) Ekranda başlangıç mesajları
+            self.log_to_console("Starting conversion...", "INFO")
+            start_time = datetime.now()
+            self.prog_time_started_var.set(f"Started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            self.prog_time_elapsed_var.set("Elapsed: 0 min 0 sec")
 
-        # Progress bar ve üstteki mesaj
-        self.pb["value"] = 0
-        self.prog_message_var.set("Preparing...")
+            # Progress bar ve üstteki mesaj
+            self.pb["value"] = 0
+            self.prog_message_var.set("Preparing...")
 
-        # Thread ile ana döngü arasında mesajlaşma için
-        progress_queue = Queue()
+            # Thread ile ana döngü arasında mesajlaşma için
+            progress_queue = Queue()
 
-        def convert_thread():
-            """Arka planda chunk+convert işlemlerini yapar, UI güncellemeleri için queue mesajları yollar."""
-            converted_files = []  # Successfully converted CSVs
+            def convert_thread():
+                """Arka planda chunk+convert işlemlerini yapar, UI güncellemeleri için queue mesajları yollar."""
+                converted_files = []  # Successfully converted CSVs
 
-            try:
-                for item in checked_items:
-                    if self.stop_flag:
-                        self.log_to_console("Conversion stopped by user", "WARNING")
-                        # Clean up any partial files
-                        for chunk_folder in Path(self.download_dir_var.get()).rglob("chunked_*"):
-                            if chunk_folder.is_dir():
-                                try:
-                                    shutil.rmtree(chunk_folder)
-                                    self.log_to_console(f"Cleaned up chunk folder: {chunk_folder}", "INFO")
-                                except Exception as e:
-                                    self.log_to_console(f"Error cleaning up {chunk_folder}: {e}", "ERROR")
-                        return
-                    
-                    # Treeview'dan değerleri al
-                    values = self.tree.item(item, "values")
-                    month_val = values[1]
-                    content_val = values[2]
-                    size_val = values[3]
-                    downloaded_val = values[4]
-                    extracted_val = values[5]
-                    processed_val = values[6]
+                try:
+                    for item in checked_items:
+                        if self.stop_flag:
+                            self.log_to_console("Conversion stopped by user", "WARNING")
+                            # Clean up any partial files
+                            for chunk_folder in Path(self.download_dir_var.get()).rglob("chunked_*"):
+                                if chunk_folder.is_dir():
+                                    try:
+                                        shutil.rmtree(chunk_folder)
+                                        self.log_to_console(f"Cleaned up chunk folder: {chunk_folder}", "INFO")
+                                    except Exception as e:
+                                        self.log_to_console(f"Error cleaning up {chunk_folder}: {e}", "ERROR")
+                            return
+                        
+                        # Treeview'dan değerleri al
+                        values = self.tree.item(item, "values")
+                        month_val = values[1]
+                        content_val = values[2]
+                        size_val = values[3]
+                        downloaded_val = values[4]
+                        extracted_val = values[5]
+                        processed_val = values[6]
 
-                    if extracted_val != "✔":
-                        self.log_to_console("File not extracted, cannot convert.", "WARNING")
-                        continue
-                    if processed_val == "✔":
-                        self.log_to_console("File already processed. Skipping...", "INFO")
-                        continue
+                        if extracted_val != "✔":
+                            self.log_to_console("File not extracted, cannot convert.", "WARNING")
+                            continue
+                        if processed_val == "✔":
+                            self.log_to_console("File already processed. Skipping...", "INFO")
+                            continue
 
-                    row_data = self.data_df[
-                        (self.data_df["month"] == month_val) &
-                        (self.data_df["content"] == content_val) &
-                        (self.data_df["size"] == size_val) &
-                        (self.data_df["Downloaded"] == downloaded_val) &
-                        (self.data_df["Extracted"] == extracted_val) &
-                        (self.data_df["Processed"] == processed_val)
-                        ]
-                    if row_data.empty:
-                        continue
+                        row_data = self.data_df[
+                            (self.data_df["month"] == month_val) &
+                            (self.data_df["content"] == content_val) &
+                            (self.data_df["size"] == size_val) &
+                            (self.data_df["Downloaded"] == downloaded_val) &
+                            (self.data_df["Extracted"] == extracted_val) &
+                            (self.data_df["Processed"] == processed_val)
+                            ]
+                        if row_data.empty:
+                            continue
 
-                    url = row_data["URL"].values[0]
-                    folder_name = row_data["month"].values[0]
-                    filename = os.path.basename(url)
+                        url = row_data["URL"].values[0]
+                        folder_name = row_data["month"].values[0]
+                        filename = os.path.basename(url)
 
-                    # .gz -> .xml (aynı isim, uzantı .xml)
-                    extracted_file = (
-                            Path(self.download_dir_var.get())
-                            / "Datasets"
-                            / folder_name
-                            / filename
-                    ).with_suffix("")  # e.g. discogs_2023-01-01_releases.xml
+                        # .gz -> .xml (aynı isim, uzantı .xml)
+                        extracted_file = (
+                                Path(self.download_dir_var.get())
+                                / "Datasets"
+                                / folder_name
+                                / filename
+                        ).with_suffix("")  # e.g. discogs_2023-01-01_releases.xml
 
-                    if not extracted_file.exists():
-                        self.log_to_console(f"Extracted XML not found: {extracted_file}", "ERROR")
-                        continue
+                        if not extracted_file.exists():
+                            self.log_to_console(f"Extracted XML not found: {extracted_file}", "ERROR")
+                            continue
 
-                    # 2) UI'ya "File: ..." güncellemesi
-                    progress_queue.put(('file_change', extracted_file.name))
+                        # 2) UI'ya "File: ..." güncellemesi
+                        progress_queue.put(('file_change', extracted_file.name))
 
-                    # 3) Chunking aşamasına geçtiğimizi bildirelim
-                    progress_queue.put(('chunking_start', None))
+                        # 3) Chunking aşamasına geçtiğimizi bildirelim
+                        progress_queue.put(('chunking_start', None))
 
-                    # --- CHUNK İşlemi ---
-                    try:
-                        self.log_to_console(f"Chunking XML by type: {extracted_file}", "INFO")
-                        chunk_xml_by_type(
-                            extracted_file,
-                            content_type=content_val,
-                            records_per_file=10000,
-                            logger=self.log_to_console
-                        )
-                    except Exception as e:
-                        self.log_to_console(f"Error chunking {extracted_file}: {e}", "ERROR")
-                        continue
+                        # --- CHUNK İşlemi ---
+                        try:
+                            self.log_to_console(f"Chunking XML by type: {extracted_file}", "INFO")
+                            chunk_xml_by_type(
+                                extracted_file,
+                                content_type=content_val,
+                                records_per_file=10000,
+                                logger=self.log_to_console
+                            )
+                        except Exception as e:
+                            self.log_to_console(f"Error chunking {extracted_file}: {e}", "ERROR")
+                            continue
 
-                    # Chunk bitti → UI'ya haber ver
-                    progress_queue.put(('chunking_done', None))
+                        # Chunk bitti → UI'ya haber ver
+                        progress_queue.put(('chunking_done', None))
 
-                    # --- Convert chunk to CSV ---
-                    chunk_folder = extracted_file.parent / f"chunked_{content_val}"
-                    combined_csv = extracted_file.with_suffix(".csv")
+                        # --- Convert chunk to CSV ---
+                        chunk_folder = extracted_file.parent / f"chunked_{content_val}"
+                        combined_csv = extracted_file.with_suffix(".csv")
 
-                    # Lokal geri çağırım: her chunk işlendiğinde % gelsin
-                    def local_progress_cb(current_step, total_steps):
-                        pct = (current_step / total_steps) * 100 if total_steps else 0
-                        progress_queue.put(('conversion_progress', pct))
+                        # Lokal geri çağırım: her chunk işlendiğinde % gelsin
+                        def local_progress_cb(current_step, total_steps):
+                            pct = (current_step / total_steps) * 100 if total_steps else 0
+                            progress_queue.put(('conversion_progress', pct))
 
-                    try:
-                        self.log_to_console(f"Converting chunks to CSV: {chunk_folder}", "INFO")
+                        try:
+                            self.log_to_console(f"Converting chunks to CSV: {chunk_folder}", "INFO")
 
-                        convert_chunked_files_to_csv(
-                            chunk_folder,
-                            combined_csv,
-                            content_val,
-                            logger=self.log_to_console,
-                            progress_cb=local_progress_cb
-                        )
-                        # Chunk klasörünü sil
-                        shutil.rmtree(chunk_folder, ignore_errors=True)
+                            convert_chunked_files_to_csv(
+                                chunk_folder,
+                                combined_csv,
+                                content_val,
+                                logger=self.log_to_console,
+                                progress_cb=local_progress_cb
+                            )
+                            # Chunk klasörünü sil
+                            shutil.rmtree(chunk_folder, ignore_errors=True)
 
-                        # Başarılı -> Processed = "✔"
-                        self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✔"
-                        self.log_to_console(f"Successfully created {combined_csv}", "INFO")
+                            # Başarılı -> Processed = "✔"
+                            self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✔"
+                            self.log_to_console(f"Successfully created {combined_csv}", "INFO")
 
-                        # Bu dosya başarıyla dönüştürülmüş
-                        converted_files.append(combined_csv)
+                            # Bu dosya başarıyla dönüştürülmüş
+                            converted_files.append(combined_csv)
 
-                    except Exception as e:
-                        self.log_to_console(f"Error converting {extracted_file}: {e}", "ERROR")
+                        except Exception as e:
+                            self.log_to_console(f"Error converting {extracted_file}: {e}", "ERROR")
 
-                # Tüm seçili dosyalar bitti
-                self.log_to_console("Conversion completed for selected files.", "INFO")
+                    # Tüm seçili dosyalar bitti
+                    self.log_to_console("Conversion completed for selected files.", "INFO")
 
-            except Exception as e:
-                self.log_to_console(f"Error in convert_thread: {e}", "ERROR")
+                except Exception as e:
+                    self.log_to_console(f"Error in convert_thread: {e}", "ERROR")
 
-            finally:
-                # En sonda 'done' mesajı iletiliyor
-                progress_queue.put(('done', converted_files))
+                finally:
+                    # En sonda 'done' mesajı iletiliyor
+                    progress_queue.put(('done', converted_files))
 
-        # Thread başlat
-        th = Thread(target=convert_thread, daemon=True)
-        th.start()
+            # Thread başlat
+            th = Thread(target=convert_thread, daemon=True)
+            th.start()
 
-        # 4) Thread bitene kadar UI'yı güncel tut
-        while th.is_alive():
-            # a) Kuyruktan gelen mesajları al
+            # 4) Thread bitene kadar UI'yı güncel tut
+            while th.is_alive():
+                # a) Kuyruktan gelen mesajları al
+                try:
+                    while True:
+                        msg_type, value = progress_queue.get_nowait()
+
+                        if msg_type == 'file_change':
+                            self.prog_current_file_var.set(f"File: {value}")
+
+                        elif msg_type == 'chunking_start':
+                            self.prog_message_var.set("Chunking in progress...")
+                            self.pb["value"] = 0
+
+                        elif msg_type == 'chunking_done':
+                            self.prog_message_var.set("Starting conversion...")
+                            self.pb["value"] = 0
+
+                        elif msg_type == 'conversion_progress':
+                            self.pb["value"] = value
+                            self.prog_message_var.set(f"Converting: {value:.1f}%")
+
+                        elif msg_type == 'done':
+                            # If 'done' arrives before thread ends, handle it now
+                            converted_files = value
+                            if converted_files:
+                                last_file = converted_files[-1].name
+                                self.show_centered_popup(
+                                    "Conversion Completed",
+                                    f"{last_file} successfully converted!",
+                                    "info"
+                                )
+                            else:
+                                self.show_centered_popup(
+                                    "Conversion Completed!",
+                                    "No files were converted!",
+                                    "info"
+                                )
+                except Empty:
+                    pass
+
+                # b) Elapsed güncelle
+                now = datetime.now()
+                elapsed_sec = (now - start_time).total_seconds()
+                mins = int(elapsed_sec) // 60
+                secs = int(elapsed_sec) % 60
+                self.prog_time_elapsed_var.set(f"Elapsed: {mins} min {secs} sec")
+
+                # c) UI güncellemesi
+                self.update()
+                time.sleep(0.05)
+
+            # Thread gerçekten tamamlandı,
+            # bir de geriye kalan mesajları (özellikle 'done') yakalayalım
             try:
                 while True:
                     msg_type, value = progress_queue.get_nowait()
@@ -1927,20 +1996,12 @@ class DiscogsDataProcessorUI(ttk.Frame):
                     if msg_type == 'file_change':
                         self.prog_current_file_var.set(f"File: {value}")
 
-                    elif msg_type == 'chunking_start':
-                        self.prog_message_var.set("Chunking in progress...")
-                        self.pb["value"] = 0
-
-                    elif msg_type == 'chunking_done':
-                        self.prog_message_var.set("Starting conversion...")
-                        self.pb["value"] = 0
-
                     elif msg_type == 'conversion_progress':
                         self.pb["value"] = value
                         self.prog_message_var.set(f"Converting: {value:.1f}%")
 
                     elif msg_type == 'done':
-                        # If 'done' arrives before thread ends, handle it now
+                        # If 'done' arrives AFTER the thread is no longer alive, handle it here
                         converted_files = value
                         if converted_files:
                             last_file = converted_files[-1].name
@@ -1951,66 +2012,34 @@ class DiscogsDataProcessorUI(ttk.Frame):
                             )
                         else:
                             self.show_centered_popup(
-                                "Conversion Completed!",
-                                "No files were converted!",
+                                "Conversion Completed",
+                                "No files were converted",
                                 "info"
                             )
+
             except Empty:
                 pass
 
-            # b) Elapsed güncelle
-            now = datetime.now()
-            elapsed_sec = (now - start_time).total_seconds()
-            mins = int(elapsed_sec) // 60
-            secs = int(elapsed_sec) % 60
-            self.prog_time_elapsed_var.set(f"Elapsed: {mins} min {secs} sec")
+            # d) Son hâl: Elapsed sabitlenir
+            total_elapsed = (datetime.now() - start_time).total_seconds()
+            total_mins = int(total_elapsed) // 60
+            total_secs = int(total_elapsed) % 60
+            self.prog_time_elapsed_var.set(f"Elapsed: {total_mins} min {total_secs} sec")
 
-            # c) UI güncellemesi
-            self.update()
-            time.sleep(0.05)
+            # e) Mesaj
+            self.prog_message_var.set("Conversion completed")
+            self.populate_table(self.data_df)
 
-        # Thread gerçekten tamamlandı,
-        # bir de geriye kalan mesajları (özellikle 'done') yakalayalım
-        try:
-            while True:
-                msg_type, value = progress_queue.get_nowait()
+        except Exception as e:
+            self.stop_status_indicator()  # Stop blinking on error
+            self.log_to_console(f"Error in convert_selected: {e}", "ERROR")
+            self.after(0, lambda: self.show_centered_popup(
+                "Conversion Error",
+                f"An error occurred during conversion:\n{str(e)}",
+                "error"
+            ))
 
-                if msg_type == 'file_change':
-                    self.prog_current_file_var.set(f"File: {value}")
-
-                elif msg_type == 'conversion_progress':
-                    self.pb["value"] = value
-                    self.prog_message_var.set(f"Converting: {value:.1f}%")
-
-                elif msg_type == 'done':
-                    # If 'done' arrives AFTER the thread is no longer alive, handle it here
-                    converted_files = value
-                    if converted_files:
-                        last_file = converted_files[-1].name
-                        self.show_centered_popup(
-                            "Conversion Completed",
-                            f"{last_file} successfully converted!",
-                            "info"
-                        )
-                    else:
-                        self.show_centered_popup(
-                            "Conversion Completed",
-                            "No files were converted",
-                            "info"
-                        )
-
-        except Empty:
-            pass
-
-        # d) Son hâl: Elapsed sabitlenir
-        total_elapsed = (datetime.now() - start_time).total_seconds()
-        total_mins = int(total_elapsed) // 60
-        total_secs = int(total_elapsed) % 60
-        self.prog_time_elapsed_var.set(f"Elapsed: {total_mins} min {total_secs} sec")
-
-        # e) Mesaj
-        self.prog_message_var.set("Conversion completed")
-        self.populate_table(self.data_df)
+        self.stop_status_indicator()  # Stop blinking when done
 
     def get_folder_size(self, folder_path):
         total_size = 0
@@ -2100,6 +2129,27 @@ class DiscogsDataProcessorUI(ttk.Frame):
             self.log_to_console(f"Network error: {e}", "ERROR")
         except Exception as e:
             self.log_to_console(f"Error: {e}", "ERROR")
+
+    def start_status_indicator(self):
+        """Start the status indicator blinking"""
+        self.status_indicator_active = True
+        self.blink_status_indicator()
+
+    def stop_status_indicator(self):
+        """Stop the status indicator blinking"""
+        self.status_indicator_active = False
+        if self.blink_after_id:
+            self.after_cancel(self.blink_after_id)
+            self.blink_after_id = None
+        self.status_indicator.itemconfig(self.indicator_oval, fill='gray')
+
+    def blink_status_indicator(self):
+        """Toggle the status indicator visibility"""
+        if self.status_indicator_active:
+            self.status_indicator_visible = not self.status_indicator_visible
+            color = '#2ecc71' if self.status_indicator_visible else '#27ae60'  # Different shades of green
+            self.status_indicator.itemconfig(self.indicator_oval, fill=color)
+            self.blink_after_id = self.after(500, self.blink_status_indicator)
 
 
 def main():
