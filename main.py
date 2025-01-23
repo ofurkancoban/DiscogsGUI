@@ -1,4 +1,3 @@
-import threading
 import gzip
 import os
 import sys
@@ -13,7 +12,6 @@ from threading import Thread, Lock
 import webbrowser  # <-- for opening social media links
 import csv
 import queue
-import struct
 from tkinter import filedialog
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
@@ -21,6 +19,7 @@ from tkinter import messagebox
 from tkinter import StringVar  # Import StringVar
 import time
 from datetime import datetime, timedelta
+from PIL import Image, ImageTk
 
 ###############################################################################
 #                          File-Type → XML Tag Mapping
@@ -1523,7 +1522,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
             def extract_worker():
                 try:
-                    import gzip
                     # First, create a temporary XML file
                     temp_output_path = output_path.with_suffix('.xml.tmp')
                     
