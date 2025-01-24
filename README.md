@@ -1,5 +1,3 @@
-# 🎵 Discogs Data Processor
-
 <h1  align="center">🎵 Discogs Data Processor GUI Project 💿</h1>
 
 <p align="center">
