@@ -19,7 +19,6 @@ from tkinter import messagebox
 from tkinter import StringVar  # Import StringVar
 import time
 from datetime import datetime, timedelta
-from PIL import Image, ImageTk
 
 ###############################################################################
 #                          File-Type → XML Tag Mapping
