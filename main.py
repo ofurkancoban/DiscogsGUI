@@ -1,7 +1,7 @@
 import gzip
 import os
 import sys
-import shutil  # <-- we use shutil.rmtree() to remove chunk folders
+import shutil  # <-- I use shutil.rmtree() to remove chunk folders
 import requests
 import platform
 import subprocess
