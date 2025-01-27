@@ -19,74 +19,71 @@ from tkinter import messagebox
 from tkinter import StringVar  # Import StringVar
 import time
 from datetime import datetime, timedelta
+import json
 
 ###############################################################################
 #                          File-Type → XML Tag Mapping
 ###############################################################################
-TAG_MAP = {
-    "releases": "<release",
-    "artists": "<artist",
-    "masters": "<master",
-    "labels": "<label"
-}
+
 
 
 ###############################################################################
 #                              XML → DataFrame logic
 ###############################################################################
-def xml_to_df(xml_path: Path) -> pd.DataFrame:
-    """Convert an XML file to a pandas DataFrame using iterative parsing
-       (non-streaming, might cause MemoryError on huge files)."""
-    data_dict = {}
+def xml_to_df(xml_path: Path, record_tag: str) -> pd.DataFrame:
+    """Convert an XML file to a pandas DataFrame, handling nested tags as lists."""
+    records = []
+    current_record = {}
     current_path = []
 
     for event, elem in ET.iterparse(str(xml_path), events=("start", "end")):
         if event == "start":
             current_path.append(elem.tag)
-            # handle attributes
-            for attr, value in elem.attrib.items():
-                if len(current_path) > 1:
-                    tag_name = f"{'_'.join(current_path[-2:])}_{attr}"
-                else:
-                    tag_name = f"{elem.tag}_{attr}"
-                if tag_name not in data_dict:
-                    data_dict[tag_name] = []
-                data_dict[tag_name].append(value)
-
+            if elem.tag == record_tag:
+                current_record = {}
         elif event == "end":
-            if elem.text and not elem.text.isspace():
-                if len(current_path) > 1:
-                    tag_name = '_'.join(current_path[-2:])
-                else:
-                    tag_name = current_path[-1]
-                if tag_name not in data_dict:
-                    data_dict[tag_name] = []
-                data_dict[tag_name].append(elem.text.strip())
+            if elem.tag == record_tag:
+                records.append(current_record)
+                current_record = {}
+            else:
+                if elem.text and not elem.text.isspace():
+                    tag_name = elem.tag
+                    value = elem.text.strip()
+                    # Handle nested tags by storing values in lists
+                    if tag_name in current_record:
+                        if isinstance(current_record[tag_name], list):
+                            current_record[tag_name].append(value)
+                        else:
+                            current_record[tag_name] = [current_record[tag_name], value]
+                    else:
+                        current_record[tag_name] = value
+                # Handle attributes
+                for attr, value in elem.attrib.items():
+                    attr_name = f"{elem.tag}_{attr}"
+                    current_record[attr_name] = value
             current_path.pop()
             elem.clear()
 
-    # If data_dict is empty, return empty
-    if not data_dict:
-        return pd.DataFrame()
+    # Create DataFrame from records
+    df = pd.DataFrame(records)
 
-    # unify lengths
-    max_len = max(len(lst) for lst in data_dict.values())
-    for key, value in data_dict.items():
-        if len(value) < max_len:
-            data_dict[key] = value + [None] * (max_len - len(value))
+    # Serialize list columns as JSON strings for CSV compatibility
+    for col in df.columns:
+        if df[col].apply(lambda x: isinstance(x, list)).any():
+            df[col] = df[col].apply(lambda x: json.dumps(x) if isinstance(x, list) else x)
 
-    df = pd.DataFrame(data_dict)
     return df
+
 
 
 ###############################################################################
 #                            Helper to convert a single XML file to CSV
 ###############################################################################
-def convert_extracted_file_to_csv(extracted_file_path: Path, output_csv_path: Path, logger=None) -> bool:
+def convert_extracted_file_to_csv(extracted_file_path: Path, output_csv_path: Path, record_tag: str, logger=None) -> bool:
     """
     Use xml_to_df logic to convert the extracted XML file into a CSV.
+    Handles nested tags by writing them as JSON lists.
     Returns True if successful, False otherwise.
-    (This can cause MemoryError on huge files.)
     """
     if not extracted_file_path.exists():
         if logger:
@@ -95,7 +92,7 @@ def convert_extracted_file_to_csv(extracted_file_path: Path, output_csv_path: Pa
             print(f"[ERROR] File not found: {extracted_file_path}")
         return False
     try:
-        df = xml_to_df(extracted_file_path)
+        df = xml_to_df(extracted_file_path, record_tag)
         df.to_csv(output_csv_path, index=False)
         if logger:
             logger(f"Converted {extracted_file_path} to {output_csv_path}", "INFO")
@@ -108,6 +105,7 @@ def convert_extracted_file_to_csv(extracted_file_path: Path, output_csv_path: Pa
         else:
             print(f"[ERROR] convert_extracted_file_to_csv: {e}")
         return False
+
 
 
 ###############################################################################
@@ -201,11 +199,13 @@ def update_columns_from_chunk(chunk_file_path: Path, all_columns: set, record_ta
         print(f"Updated columns from {chunk_file_path.name}. Total columns now: {len(all_columns)}")
 
 
+
 def write_chunk_to_csv(chunk_file_path: Path, csv_writer: csv.DictWriter, all_columns: list, record_tag: str,
                        logger=None):
     """
     2. Pass: Parse the chunk file line by line.
              For each <record_tag>...</record_tag> record, write a single row to the CSV.
+             Nested tags are serialized as JSON lists.
     """
     current_path = []
     record_data = {}
@@ -219,7 +219,14 @@ def write_chunk_to_csv(chunk_file_path: Path, csv_writer: csv.DictWriter, all_co
                     tag_name = f"{'_'.join(current_path[-2:])}_{attr}"
                 else:
                     tag_name = f"{elem.tag}_{attr}"
-                record_data[tag_name] = value
+                # Handle multiple attributes by storing in lists
+                if tag_name in record_data:
+                    if isinstance(record_data[tag_name], list):
+                        record_data[tag_name].append(value)
+                    else:
+                        record_data[tag_name] = [record_data[tag_name], value]
+                else:
+                    record_data[tag_name] = value
 
         elif event == "end":
             if elem.text and not elem.text.isspace():
@@ -227,13 +234,25 @@ def write_chunk_to_csv(chunk_file_path: Path, csv_writer: csv.DictWriter, all_co
                     tag_name = '_'.join(current_path[-2:])
                 else:
                     tag_name = current_path[-1]
-                record_data[tag_name] = elem.text.strip()
+                # Handle multiple tags by storing in lists
+                if tag_name in record_data:
+                    if isinstance(record_data[tag_name], list):
+                        record_data[tag_name].append(elem.text.strip())
+                    else:
+                        record_data[tag_name] = [record_data[tag_name], elem.text.strip()]
+                else:
+                    record_data[tag_name] = elem.text.strip()
 
             if elem.tag == record_tag:
                 # Record completed, write to CSV
                 row_to_write = {}
                 for col in all_columns:
-                    row_to_write[col] = record_data.get(col, None)
+                    value = record_data.get(col, None)
+                    if isinstance(value, list):
+                        # Serialize lists as JSON strings
+                        row_to_write[col] = json.dumps(value)
+                    else:
+                        row_to_write[col] = value
                 csv_writer.writerow(row_to_write)
                 record_data.clear()
 
@@ -244,6 +263,8 @@ def write_chunk_to_csv(chunk_file_path: Path, csv_writer: csv.DictWriter, all_co
         logger(f"Written data from {chunk_file_path.name} to CSV.", "INFO")
     else:
         print(f"Written data from {chunk_file_path.name} to CSV.")
+
+
 
 def convert_progress_callback(self, current_step, total_steps):
     """Called when each chunk is completed during the conversion process."""
@@ -312,6 +333,7 @@ def convert_chunked_files_to_csv(
         logger(f"Done! Created CSV: {output_csv}", "INFO")
     else:
         print(f"[INFO] Done! Created CSV: {output_csv}")
+
 
 
 ###############################################################################
@@ -1792,7 +1814,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
             """Convert (XML→CSV) işlemini başlatır."""
             # Add stop_flag check at the start
             self.stop_flag = False
-            
+
             from queue import Queue, Empty
             import time
             from datetime import datetime
@@ -1833,7 +1855,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                                     except Exception as e:
                                         self.log_to_console(f"Error cleaning up {chunk_folder}: {e}", "ERROR")
                             return
-                        
+
                         # Treeview'dan değerleri al
                         values = self.tree.item(item, "values")
                         month_val = values[1]
