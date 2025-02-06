@@ -30,50 +30,101 @@ import json
 ###############################################################################
 #                              XML → DataFrame logic
 ###############################################################################
+
 def xml_to_df(xml_path: Path, record_tag: str) -> pd.DataFrame:
-    """Convert an XML file to a pandas DataFrame, handling nested tags as lists."""
+    """
+    Convert an XML file to a pandas DataFrame, handling two levels of nested tags.
+    Automatically detects list-type columns based on multiple occurrences of tags.
+    Nested tags are stored as lists and serialized as JSON strings for CSV compatibility.
+    """
     records = []
     current_record = {}
     current_path = []
+    nested_data = {}
+    tag_counts = {}
 
     for event, elem in ET.iterparse(str(xml_path), events=("start", "end")):
         if event == "start":
             current_path.append(elem.tag)
             if elem.tag == record_tag:
                 current_record = {}
+                nested_data = {}
+                tag_counts = {}
         elif event == "end":
             if elem.tag == record_tag:
+                # Merge nested_data into current_record
+                for key, value in nested_data.items():
+                    if key in current_record:
+                        if isinstance(current_record[key], list):
+                            current_record[key].append(value)
+                        else:
+                            current_record[key] = [current_record[key], value]
+                    else:
+                        current_record[key] = value
                 records.append(current_record)
                 current_record = {}
+                nested_data = {}
+                tag_counts = {}
             else:
                 if elem.text and not elem.text.isspace():
-                    tag_name = elem.tag
-                    value = elem.text.strip()
-                    # Handle nested tags by storing values in lists
-                    if tag_name in current_record:
-                        if isinstance(current_record[tag_name], list):
-                            current_record[tag_name].append(value)
-                        else:
-                            current_record[tag_name] = [current_record[tag_name], value]
+                    if len(current_path) >= 3:
+                        # Two levels deep
+                        parent_tag = current_path[-3]
+                        child_tag = current_path[-2]
+                        full_tag = f"{parent_tag}_{child_tag}_{elem.tag}"
+                    elif len(current_path) == 2:
+                        # One level deep
+                        full_tag = f"{current_path[-2]}_{elem.tag}"
                     else:
-                        current_record[tag_name] = value
+                        # Root level
+                        full_tag = elem.tag
+
+                    # Initialize tag count
+                    tag_counts[full_tag] = tag_counts.get(full_tag, 0) + 1
+
+                    value = elem.text.strip()
+                    if tag_counts[full_tag] > 1:
+                        # If tag occurs multiple times, store as list
+                        if full_tag in nested_data:
+                            nested_data[full_tag].append(value)
+                        else:
+                            nested_data[full_tag] = [nested_data.get(full_tag, []), value]
+                    else:
+                        nested_data[full_tag] = value
                 # Handle attributes
                 for attr, value in elem.attrib.items():
-                    attr_name = f"{elem.tag}_{attr}"
-                    current_record[attr_name] = value
+                    if len(current_path) >= 3:
+                        parent_tag = current_path[-3]
+                        child_tag = current_path[-2]
+                        tag_name = f"{parent_tag}_{child_tag}_{elem.tag}_{attr}"
+                    elif len(current_path) == 2:
+                        tag_name = f"{current_path[-2]}_{elem.tag}_{attr}"
+                    else:
+                        tag_name = f"{elem.tag}_{attr}"
+
+                    # Initialize tag count
+                    tag_counts[tag_name] = tag_counts.get(tag_name, 0) + 1
+
+                    if tag_counts[tag_name] > 1:
+                        # If attribute occurs multiple times, store as list
+                        if tag_name in nested_data:
+                            nested_data[tag_name].append(value)
+                        else:
+                            nested_data[tag_name] = [nested_data.get(tag_name, []), value]
+                    else:
+                        nested_data[tag_name] = value
             current_path.pop()
             elem.clear()
 
     # Create DataFrame from records
     df = pd.DataFrame(records)
 
-    # Serialize list columns as JSON strings for CSV compatibility
+    # Dynamically serialize list-type columns as JSON strings
     for col in df.columns:
         if df[col].apply(lambda x: isinstance(x, list)).any():
             df[col] = df[col].apply(lambda x: json.dumps(x) if isinstance(x, list) else x)
 
     return df
-
 
 
 ###############################################################################
@@ -105,6 +156,7 @@ def convert_extracted_file_to_csv(extracted_file_path: Path, output_csv_path: Pa
         else:
             print(f"[ERROR] convert_extracted_file_to_csv: {e}")
         return False
+
 
 
 
@@ -173,17 +225,31 @@ def update_columns_from_chunk(chunk_file_path: Path, all_columns: set, record_ta
             current_path.append(elem.tag)
             # Discover attributes
             for attr, value in elem.attrib.items():
-                if len(current_path) > 1:
-                    tag_name = f"{'_'.join(current_path[-2:])}_{attr}"
+                if len(current_path) >= 3:
+                    # Two levels deep
+                    parent_tag = current_path[-3]
+                    current_tag = current_path[-2]
+                    tag_name = f"{parent_tag}_{current_tag}_{elem.tag}_{attr}"
+                elif len(current_path) == 2:
+                    # One level deep
+                    tag_name = f"{current_path[-2]}_{elem.tag}_{attr}"
                 else:
+                    # Root or unexpected depth
                     tag_name = f"{elem.tag}_{attr}"
                 all_columns.add(tag_name)
         elif event == "end":
             if elem.text and not elem.text.isspace():
-                if len(current_path) > 1:
-                    tag_name = '_'.join(current_path[-2:])
+                if len(current_path) >= 3:
+                    # Two levels deep
+                    parent_tag = current_path[-3]
+                    current_tag = current_path[-2]
+                    tag_name = f"{parent_tag}_{current_tag}_{elem.tag}"
+                elif len(current_path) == 2:
+                    # One level deep
+                    tag_name = f"{current_path[-2]}_{elem.tag}"
                 else:
-                    tag_name = current_path[-1]
+                    # Root or unexpected depth
+                    tag_name = elem.tag
                 all_columns.add(tag_name)
 
             if elem.tag == record_tag:
@@ -200,61 +266,88 @@ def update_columns_from_chunk(chunk_file_path: Path, all_columns: set, record_ta
 
 
 
+
 def write_chunk_to_csv(chunk_file_path: Path, csv_writer: csv.DictWriter, all_columns: list, record_tag: str,
                        logger=None):
     """
     2. Pass: Parse the chunk file line by line.
              For each <record_tag>...</record_tag> record, write a single row to the CSV.
-             Nested tags are serialized as JSON lists.
+             Nested tags are serialized as JSON strings.
     """
     current_path = []
     record_data = {}
+    nested_data = {}
 
     for event, elem in ET.iterparse(str(chunk_file_path), events=("start", "end")):
         if event == "start":
             current_path.append(elem.tag)
             # Save attributes
             for attr, value in elem.attrib.items():
-                if len(current_path) > 1:
-                    tag_name = f"{'_'.join(current_path[-2:])}_{attr}"
+                if len(current_path) >= 3:
+                    # Two levels deep
+                    parent_tag = current_path[-3]
+                    current_tag = current_path[-2]
+                    tag_name = f"{parent_tag}_{current_tag}_{elem.tag}_{attr}"
+                elif len(current_path) == 2:
+                    # One level deep
+                    tag_name = f"{current_path[-2]}_{elem.tag}_{attr}"
                 else:
+                    # Root or unexpected depth
                     tag_name = f"{elem.tag}_{attr}"
                 # Handle multiple attributes by storing in lists
-                if tag_name in record_data:
-                    if isinstance(record_data[tag_name], list):
-                        record_data[tag_name].append(value)
+                if tag_name in nested_data:
+                    if isinstance(nested_data[tag_name], list):
+                        nested_data[tag_name].append(value)
                     else:
-                        record_data[tag_name] = [record_data[tag_name], value]
+                        nested_data[tag_name] = [nested_data[tag_name], value]
                 else:
-                    record_data[tag_name] = value
+                    nested_data[tag_name] = value
 
         elif event == "end":
             if elem.text and not elem.text.isspace():
-                if len(current_path) > 1:
-                    tag_name = '_'.join(current_path[-2:])
+                if len(current_path) >= 3:
+                    # Two levels deep
+                    parent_tag = current_path[-3]
+                    current_tag = current_path[-2]
+                    tag_name = f"{parent_tag}_{current_tag}_{elem.tag}"
+                elif len(current_path) == 2:
+                    # One level deep
+                    tag_name = f"{current_path[-2]}_{elem.tag}"
                 else:
-                    tag_name = current_path[-1]
+                    # Root or unexpected depth
+                    tag_name = elem.tag
                 # Handle multiple tags by storing in lists
-                if tag_name in record_data:
-                    if isinstance(record_data[tag_name], list):
-                        record_data[tag_name].append(elem.text.strip())
+                if tag_name in nested_data:
+                    if isinstance(nested_data[tag_name], list):
+                        nested_data[tag_name].append(elem.text.strip())
                     else:
-                        record_data[tag_name] = [record_data[tag_name], elem.text.strip()]
+                        nested_data[tag_name] = [nested_data[tag_name], elem.text.strip()]
                 else:
-                    record_data[tag_name] = elem.text.strip()
+                    nested_data[tag_name] = elem.text.strip()
 
             if elem.tag == record_tag:
                 # Record completed, write to CSV
+                # Merge nested_data into current_record
+                for key, value in nested_data.items():
+                    if key in record_data:
+                        if isinstance(record_data[key], list):
+                            record_data[key].append(value)
+                        else:
+                            record_data[key] = [record_data[key], value]
+                    else:
+                        record_data[key] = value
+
+                # Serialize nested structures as JSON strings
                 row_to_write = {}
                 for col in all_columns:
                     value = record_data.get(col, None)
-                    if isinstance(value, list):
-                        # Serialize lists as JSON strings
+                    if isinstance(value, (dict, list)):
                         row_to_write[col] = json.dumps(value)
                     else:
                         row_to_write[col] = value
                 csv_writer.writerow(row_to_write)
                 record_data.clear()
+                nested_data.clear()
 
             current_path.pop()
             elem.clear()
@@ -263,6 +356,7 @@ def write_chunk_to_csv(chunk_file_path: Path, csv_writer: csv.DictWriter, all_co
         logger(f"Written data from {chunk_file_path.name} to CSV.", "INFO")
     else:
         print(f"Written data from {chunk_file_path.name} to CSV.")
+
 
 
 
@@ -282,13 +376,13 @@ def convert_chunked_files_to_csv(
     output_csv: Path,
     content_type: str,
     logger=None,
-    progress_cb=None  # <-- YENİ EKLENDİ
+    progress_cb=None  # Callback for progress updates
 ):
     """
-    1) Tüm chunk dosyalarında kolonları keşfet (pass 1).
-    2) Tüm chunk dosyalarını CSV'ye yaz (pass 2).
-    progress_cb(current_step, total_steps) varsa
-    her chunk işlenince çağrılacak.
+    1) Discover columns across all chunk files (pass 1).
+    2) Write all chunk files to CSV (pass 2).
+    If progress_cb(current_step, total_steps) is provided,
+    it will be called after each chunk is processed.
     """
     import csv
     record_tag = content_type[:-1]  # "releases" -> "release"
@@ -305,18 +399,18 @@ def convert_chunked_files_to_csv(
     current_step = 0
     all_columns = set()
 
-    # Kaç adım var? PASS 1 + PASS 2 = 2 * total_chunks
+    # Total steps: PASS 1 + PASS 2 = 2 * total_chunks
     total_steps = 2 * total_chunks
 
     for cf in chunk_files:
         update_columns_from_chunk(cf, all_columns, record_tag=record_tag, logger=logger)
         current_step += 1
 
-        # Her chunk'ten sonra callback ile progress bar güncelle
+        # Update progress bar after each chunk
         if progress_cb:
             progress_cb(current_step, total_steps)
 
-    all_columns = sorted(all_columns)  # Kolonları sıralı tut
+    all_columns = sorted(all_columns)  # Keep columns ordered
 
     # 2) PASS: Write to CSV
     with open(output_csv, "w", newline="", encoding="utf-8") as f:
@@ -333,6 +427,7 @@ def convert_chunked_files_to_csv(
         logger(f"Done! Created CSV: {output_csv}", "INFO")
     else:
         print(f"[INFO] Done! Created CSV: {output_csv}")
+
 
 
 
@@ -440,13 +535,13 @@ class CollapsingFrame(ttk.Frame):
         frm = ttk.Frame(self, bootstyle=bootstyle, height=43)  # Set fixed height for grey background
         frm.grid(row=self.cumulative_rows, column=0, sticky=EW, pady=(0, 0))
         frm.grid_propagate(False)  # Prevent the frame from shrinking to fit content
-        
+
         header = ttk.Label(master=frm, text=title, bootstyle=(bootstyle, INVERSE))
         if kwargs.get('textvariable'):
             header.configure(textvariable=kwargs.get('textvariable'))
         # Center the label vertically in the frame
         header.place(relx=0, rely=0.5, x=10, anchor='w')
-        
+
         child.grid(row=self.cumulative_rows + 1, column=0, sticky=NSEW, pady=(0, 0))
         self.cumulative_rows += 2
 
@@ -460,7 +555,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         # [UPDATED] New variable: Download folder (default: ~/Downloads/Discogs)
         default_download_dir = Path.home() / "Downloads" / "Discogs"
         self.download_dir_var = StringVar(value=str(default_download_dir))  # Use StringVar
-        
+
         # Add status indicator variables
         self.status_indicator_visible = True
         self.status_indicator_active = False
@@ -651,12 +746,12 @@ class DiscogsDataProcessorUI(ttk.Frame):
         # Create status header frame with indicator
         status_header = ttk.Frame(status_frm)
         status_header.grid(row=0, column=0, columnspan=2, sticky=W, pady=(10,5), padx=10)
-        
+
         # Add status indicator canvas
         self.status_indicator = ttk.Canvas(status_header, width=10, height=10)
         self.status_indicator.pack(side=LEFT, padx=(0,5))
         self.indicator_oval = self.status_indicator.create_oval(2, 2, 8, 8, fill='gray', outline='')
-        
+
         # Status message next to indicator
         lbl = ttk.Label(status_header, textvariable=self.prog_message_var, font='Arial 11 bold')
         lbl.pack(side=LEFT)
@@ -1057,7 +1152,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
                 # Get the base name without any extensions
                 base_name = filename.split('.')[0]
-                
+
                 # List of all possible related files with full paths
                 related_files = [
                     base_path,  # original .gz file
@@ -1096,10 +1191,10 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
         # Update the table display
         self.populate_table(self.data_df)
-        
+
         # Update downloaded size
         self.update_downloaded_size()
-        
+
         # Create detailed completion message
         if all_deleted_files or deleted_folders:
             completion_message = "Deletion Summary:\n"
@@ -1109,11 +1204,11 @@ class DiscogsDataProcessorUI(ttk.Frame):
             if deleted_folders:
                 completion_message += f"\n\nFolders deleted ({len(deleted_folders)}):\n"
                 completion_message += "\n".join(f"- {folder}" for folder in deleted_folders)
-            
+
             # Log the detailed summary
             self.log_to_console(completion_message, "INFO")
             self.log_to_console("Table updated.", "INFO")  # tablo bitti mesajı
-            
+
             # Show popup with summary
             messagebox.showinfo("Deletion Complete", completion_message)
         else:
@@ -1156,14 +1251,14 @@ class DiscogsDataProcessorUI(ttk.Frame):
         try:
             # Always save to the Discogs folder
             log_path = Path(self.download_dir_var.get()) / "discogs_data.log"
-            
+
             # Create parent directory if it doesn't exist
             log_path.parent.mkdir(parents=True, exist_ok=True)
-                
+
             # Append the log message to the file
             with open(log_path, 'a', encoding='utf-8') as f:
                 f.write(formatted_message)
-                
+
         except Exception as e:
             # If there's an error saving the log, print to console but don't raise the error
             print(f"Error saving log to file: {e}")
@@ -1216,13 +1311,13 @@ class DiscogsDataProcessorUI(ttk.Frame):
         """Initiates the download process with logging."""
         self.stop_flag = False
         folder_name = last_modified.strftime("%Y-%m")
-        
+
         # Log download start information
         self.log_to_console(f"Starting download of {filename}", "INFO")
         self.log_to_console(f"Destination folder: {folder_name}", "INFO")
         self.log_to_console(f"Source URL: {url}", "INFO")
         self.log_to_console("Download method: Multi-threaded (8 threads)", "INFO")
-        
+
         Thread(target=self.download_file, args=(url, filename, folder_name), daemon=True).start()
 
     def parallel_download(self, url, filename, folder_name, total_size):
@@ -1236,7 +1331,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         human_size = human_readable_size(total_size)
         self.log_to_console(f"File size: {human_size}", "INFO")
         self.log_to_console(f"Target path: {file_path}", "INFO")
-        
+
         self.prog_current_file_var.set(f"File: {filename}")
 
         num_threads = 8
@@ -1265,7 +1360,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 self.log_to_console(f"Error in thread {idx}: {e}", "ERROR")
 
         start_time = datetime.now()
-        timeout = 300  # 5-minute timeout
+        timeout = 9999  # 5-minute timeout
         self.prog_time_started_var.set(f'Started at: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
         threads = []
         for i in range(num_threads):
@@ -1381,7 +1476,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         """Single-threaded download implementation."""
         self.log_to_console("Switching to single-threaded download", "INFO")
         self.log_to_console("Reason: Server doesn't support partial downloads", "INFO")
-        
+
         downloads_dir = Path(self.download_dir_var.get()) / "Datasets"
         target_dir = downloads_dir / folder_name
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -1391,11 +1486,11 @@ class DiscogsDataProcessorUI(ttk.Frame):
             response = requests.get(url, stream=True)
             total_size = int(response.headers.get('content-length', 0))
             human_size = human_readable_size(total_size)
-            
+
             # Log download details
             self.log_to_console(f"File size: {human_size}", "INFO")
             self.log_to_console(f"Target path: {file_path}", "INFO")
-            
+
             block_size = 1024 * 64
             self.pb["value"] = 0
             self.pb["maximum"] = total_size
@@ -1457,7 +1552,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         self.stop_flag = True
         self.log_to_console("Operation Stopped. Cleaning up...", "WARNING")
         self.prog_message_var.set('Stopping...')
-        
+
         # Clean up any partial download files
         downloads_dir = Path(self.download_dir_var.get()) / "Datasets"
         if downloads_dir.exists():
@@ -1471,7 +1566,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                             self.log_to_console(f"Cleaned up chunk folder: {chunk_folder}", "INFO")
                         except Exception as e:
                             self.log_to_console(f"Error cleaning up {chunk_folder}: {e}", "ERROR")
-                    
+
                     # Clean up partial files
                     for file in folder.glob("*"):
                         if file.name.endswith(('.part*', '.tmp')):
@@ -1545,13 +1640,13 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 try:
                     # First, create a temporary XML file
                     temp_output_path = output_path.with_suffix('.xml.tmp')
-                    
+
                     with gzip.open(file_path, 'rb') as f_in, open(temp_output_path, 'wb') as f_out:
                         while True:
                             if self.stop_flag:  # Check stop flag
                                 progress_queue.put(('stopped', None))
                                 return
-                                
+
                             chunk = f_in.read(1024 * 1024)  # 1 MB
                             if not chunk:
                                 break
@@ -1693,7 +1788,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                                         self.log_to_console(f"Deleted file: {file}", "INFO")
                                     except Exception as e:
                                         self.log_to_console(f"Error deleting file {file}: {e}", "ERROR")
-                
+
                     # Reset UI elements
                     self.pb["value"] = 0
                     self.prog_message_var.set('Idle...')
@@ -1811,52 +1906,36 @@ class DiscogsDataProcessorUI(ttk.Frame):
     def convert_selected(self):
         self.start_status_indicator()  # Start blinking
         try:
-            """Convert (XML→CSV) işlemini başlatır."""
-            # Add stop_flag check at the start
-            self.stop_flag = False
+            """Start the XML to CSV conversion process."""
+            self.stop_flag = False  # Reset stop flag
 
             from queue import Queue, Empty
             import time
             from datetime import datetime
 
-            # Eğer hiçbir öğe seçilmemişse uyarı ver
+            # Check if any items are selected
             checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
             if not checked_items:
                 self.log_to_console("No file selected for conversion!", "WARNING")
                 return
 
-            # 1) Ekranda başlangıç mesajları
-            self.log_to_console("Starting conversion...", "INFO")
-            start_time = datetime.now()
-            self.prog_time_started_var.set(f"Started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-            self.prog_time_elapsed_var.set("Elapsed: 0 min 0 sec")
-
-            # Progress bar ve üstteki mesaj
-            self.pb["value"] = 0
-            self.prog_message_var.set("Preparing...")
-
-            # Thread ile ana döngü arasında mesajlaşma için
+            # Initialize queue for thread communication
             progress_queue = Queue()
 
-            def convert_thread():
-                """Arka planda chunk+convert işlemlerini yapar, UI güncellemeleri için queue mesajları yollar."""
-                converted_files = []  # Successfully converted CSVs
+            # Define start_time here to track elapsed time
+            start_time = datetime.now()
 
+            def convert_thread():
+                converted_files = []  # Successfully converted CSVs
                 try:
                     for item in checked_items:
                         if self.stop_flag:
                             self.log_to_console("Conversion stopped by user", "WARNING")
                             # Clean up any partial files
-                            for chunk_folder in Path(self.download_dir_var.get()).rglob("chunked_*"):
-                                if chunk_folder.is_dir():
-                                    try:
-                                        shutil.rmtree(chunk_folder)
-                                        self.log_to_console(f"Cleaned up chunk folder: {chunk_folder}", "INFO")
-                                    except Exception as e:
-                                        self.log_to_console(f"Error cleaning up {chunk_folder}: {e}", "ERROR")
+                            self.cleanup_partial_files()
                             return
 
-                        # Treeview'dan değerleri al
+                        # Retrieve item details from the treeview
                         values = self.tree.item(item, "values")
                         month_val = values[1]
                         content_val = values[2]
@@ -1872,6 +1951,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                             self.log_to_console("File already processed. Skipping...", "INFO")
                             continue
 
+                        # Locate the corresponding row in data_df
                         row_data = self.data_df[
                             (self.data_df["month"] == month_val) &
                             (self.data_df["content"] == content_val) &
@@ -1887,25 +1967,23 @@ class DiscogsDataProcessorUI(ttk.Frame):
                         folder_name = row_data["month"].values[0]
                         filename = os.path.basename(url)
 
-                        # .gz -> .xml (aynı isim, uzantı .xml)
+                        # Determine the extracted XML file path
                         extracted_file = (
                                 Path(self.download_dir_var.get())
                                 / "Datasets"
                                 / folder_name
                                 / filename
-                        ).with_suffix("")  # e.g. discogs_2023-01-01_releases.xml
+                        ).with_suffix("")  # e.g., discogs_2023-01-01_releases.xml
 
                         if not extracted_file.exists():
                             self.log_to_console(f"Extracted XML not found: {extracted_file}", "ERROR")
                             continue
 
-                        # 2) UI'ya "File: ..." güncellemesi
+                        # Update UI with current file
                         progress_queue.put(('file_change', extracted_file.name))
 
-                        # 3) Chunking aşamasına geçtiğimizi bildirelim
+                        # Start chunking
                         progress_queue.put(('chunking_start', None))
-
-                        # --- CHUNK İşlemi ---
                         try:
                             self.log_to_console(f"Chunking XML by type: {extracted_file}", "INFO")
                             chunk_xml_by_type(
@@ -1918,58 +1996,51 @@ class DiscogsDataProcessorUI(ttk.Frame):
                             self.log_to_console(f"Error chunking {extracted_file}: {e}", "ERROR")
                             continue
 
-                        # Chunk bitti → UI'ya haber ver
+                        # Chunking done
                         progress_queue.put(('chunking_done', None))
 
-                        # --- Convert chunk to CSV ---
+                        # Convert chunks to CSV
                         chunk_folder = extracted_file.parent / f"chunked_{content_val}"
                         combined_csv = extracted_file.with_suffix(".csv")
+                        record_tag = content_val[:-1]  # e.g., "releases" -> "release"
 
-                        # Lokal geri çağırım: her chunk işlendiğinde % gelsin
                         def local_progress_cb(current_step, total_steps):
                             pct = (current_step / total_steps) * 100 if total_steps else 0
                             progress_queue.put(('conversion_progress', pct))
 
                         try:
                             self.log_to_console(f"Converting chunks to CSV: {chunk_folder}", "INFO")
-
                             convert_chunked_files_to_csv(
                                 chunk_folder,
                                 combined_csv,
-                                content_val,
+                                content_type=content_val,
                                 logger=self.log_to_console,
                                 progress_cb=local_progress_cb
                             )
-                            # Chunk klasörünü sil
+                            # Remove chunk folder after conversion
                             shutil.rmtree(chunk_folder, ignore_errors=True)
 
-                            # Başarılı -> Processed = "✔"
+                            # Update processed status
                             self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✔"
                             self.log_to_console(f"Successfully created {combined_csv}", "INFO")
-
-                            # Bu dosya başarıyla dönüştürülmüş
                             converted_files.append(combined_csv)
-
                         except Exception as e:
                             self.log_to_console(f"Error converting {extracted_file}: {e}", "ERROR")
 
-                    # Tüm seçili dosyalar bitti
+                    # Conversion completed for all selected files
                     self.log_to_console("Conversion completed for selected files.", "INFO")
-
                 except Exception as e:
                     self.log_to_console(f"Error in convert_thread: {e}", "ERROR")
-
                 finally:
-                    # En sonda 'done' mesajı iletiliyor
+                    # Signal completion
                     progress_queue.put(('done', converted_files))
 
-            # Thread başlat
+            # Start the conversion thread
             th = Thread(target=convert_thread, daemon=True)
             th.start()
 
-            # 4) Thread bitene kadar UI'yı güncel tut
+            # Update the UI based on the queue
             while th.is_alive():
-                # a) Kuyruktan gelen mesajları al
                 try:
                     while True:
                         msg_type, value = progress_queue.get_nowait()
@@ -1990,7 +2061,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
                             self.prog_message_var.set(f"Converting: {value:.1f}%")
 
                         elif msg_type == 'done':
-                            # If 'done' arrives before thread ends, handle it now
                             converted_files = value
                             if converted_files:
                                 last_file = converted_files[-1].name
@@ -2008,19 +2078,18 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 except Empty:
                     pass
 
-                # b) Elapsed güncelle
+                # Update elapsed time
                 now = datetime.now()
                 elapsed_sec = (now - start_time).total_seconds()
                 mins = int(elapsed_sec) // 60
                 secs = int(elapsed_sec) % 60
                 self.prog_time_elapsed_var.set(f"Elapsed: {mins} min {secs} sec")
 
-                # c) UI güncellemesi
+                # Refresh the UI
                 self.update()
                 time.sleep(0.05)
 
-            # Thread gerçekten tamamlandı,
-            # bir de geriye kalan mesajları (özellikle 'done') yakalayalım
+            # Handle any remaining messages after thread completion
             try:
                 while True:
                     msg_type, value = progress_queue.get_nowait()
@@ -2033,7 +2102,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
                         self.prog_message_var.set(f"Converting: {value:.1f}%")
 
                     elif msg_type == 'done':
-                        # If 'done' arrives AFTER the thread is no longer alive, handle it here
                         converted_files = value
                         if converted_files:
                             last_file = converted_files[-1].name
@@ -2048,28 +2116,26 @@ class DiscogsDataProcessorUI(ttk.Frame):
                                 "No files were converted",
                                 "info"
                             )
-
             except Empty:
                 pass
 
-            # d) Son hâl: Elapsed sabitlenir
+            # Finalize UI updates
             total_elapsed = (datetime.now() - start_time).total_seconds()
             total_mins = int(total_elapsed) // 60
             total_secs = int(total_elapsed) % 60
             self.prog_time_elapsed_var.set(f"Elapsed: {total_mins} min {total_secs} sec")
 
-            # e) Mesaj
             self.prog_message_var.set("Conversion completed")
             self.populate_table(self.data_df)
 
         except Exception as e:
             self.stop_status_indicator()  # Stop blinking on error
             self.log_to_console(f"Error in convert_selected: {e}", "ERROR")
-            self.after(0, lambda: self.show_centered_popup(
+            self.show_centered_popup(
                 "Conversion Error",
                 f"An error occurred during conversion:\n{str(e)}",
                 "error"
-            ))
+            )
 
         self.stop_status_indicator()  # Stop blinking when done
 
