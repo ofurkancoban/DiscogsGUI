@@ -1,5 +1,4 @@
 import gzip
-import os
 import sys
 import shutil  # <-- I use shutil.rmtree() to remove chunk folders
 import requests
@@ -7,7 +6,6 @@ import platform
 import subprocess
 import pandas as pd
 import xml.etree.ElementTree as ET
-from pathlib import Path
 from threading import Thread, Lock
 import webbrowser  # <-- for opening social media links
 import csv
@@ -20,13 +18,11 @@ from tkinter import StringVar  # Import StringVar
 import time
 from datetime import datetime, timedelta
 import json
-
-###############################################################################
-#                          File-Type → XML Tag Mapping
-###############################################################################
-
-
-
+import os
+import math
+from pathlib import Path
+from tkinter import messagebox
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 ###############################################################################
 #                              XML → DataFrame logic
 ###############################################################################
@@ -158,8 +154,6 @@ def convert_extracted_file_to_csv(extracted_file_path: Path, output_csv_path: Pa
         return False
 
 
-
-
 ###############################################################################
 #                   CHUNKING LOGIC (Using iterparse to avoid mismatch)
 ###############################################################################
@@ -265,8 +259,6 @@ def update_columns_from_chunk(chunk_file_path: Path, all_columns: set, record_ta
         print(f"Updated columns from {chunk_file_path.name}. Total columns now: {len(all_columns)}")
 
 
-
-
 def write_chunk_to_csv(chunk_file_path: Path, csv_writer: csv.DictWriter, all_columns: list, record_tag: str,
                        logger=None):
     """
@@ -358,8 +350,6 @@ def write_chunk_to_csv(chunk_file_path: Path, csv_writer: csv.DictWriter, all_co
         print(f"Written data from {chunk_file_path.name} to CSV.")
 
 
-
-
 def convert_progress_callback(self, current_step, total_steps):
     """Called when each chunk is completed during the conversion process."""
     if total_steps == 0:
@@ -370,6 +360,7 @@ def convert_progress_callback(self, current_step, total_steps):
     self.pb["value"] = percentage
     self.prog_message_var.set(f"Converting: {percentage:.2f}%")
     self.update_idletasks()
+
 
 def convert_chunked_files_to_csv(
     chunk_folder: Path,
@@ -427,8 +418,6 @@ def convert_chunked_files_to_csv(
         logger(f"Done! Created CSV: {output_csv}", "INFO")
     else:
         print(f"[INFO] Done! Created CSV: {output_csv}")
-
-
 
 
 ###############################################################################
@@ -587,6 +576,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
             'delete': 'icons8-trash-30.png',
             'extract': 'icons8-open-archive-30.png',
             'convert': 'icons8-export-csv-30.png',
+            'coverart': 'icons8-image-30.png',
             'logo': 'logo.png',
             'linkedin': 'linkedin.png',
             'github': 'github.png',
@@ -680,6 +670,16 @@ class DiscogsDataProcessorUI(ttk.Frame):
         btn = ttk.Button(buttonbar, text='Delete', image='delete', compound=TOP, command=self.delete_selected)
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
+        btn = ttk.Button(
+            buttonbar,
+            text='Cover Art',
+            # you could pick an icon from your assets if desired, e.g. 'info' or 'settings'
+            image='coverart',
+            compound=TOP,
+            command=self.open_coverart_window  # <--- We'll define this below
+        )
+        btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
+
         # Settings
         btn = ttk.Button(
             buttonbar,
@@ -689,6 +689,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
             command=self.open_settings  # Settings window
         )
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
+
 
         # [UPDATED] Info Button (no scrollbar in the info window)
         btn = ttk.Button(
@@ -704,28 +705,28 @@ class DiscogsDataProcessorUI(ttk.Frame):
         # LEFT PANEL
         #######################################################################
         left_panel = ttk.Frame(self, style='bg.TFrame', width=250)
-        left_panel.pack(side=LEFT, fill=BOTH, expand=True)  # fill ve expand ekleniyor
+        left_panel.pack(side=LEFT, fill=BOTH, expand=True)
         left_panel.pack_propagate(False)
 
         ds_cf = CollapsingFrame(left_panel)
         ds_cf.pack(fill=BOTH, expand=True, pady=1)
 
         ds_frm = ttk.Frame(ds_cf, padding=0)
-        ds_frm.columnconfigure(0, weight=1)  # İlk sütun genişleyebilir
-        ds_frm.rowconfigure(0, weight=1)  # İlk satır genişleyebilir
+        ds_frm.columnconfigure(0, weight=1)
+        ds_frm.rowconfigure(0, weight=1)
         ds_cf.add(child=ds_frm, title='Data Summary', bootstyle=SECONDARY)
 
         lbl = ttk.Label(ds_frm, text='Download Folder:', padding=(10, 0))  # Added left padding
         lbl.grid(row=0, column=0, sticky=W, pady=2)
 
-        self.download_folder_label = ttk.Label(ds_frm, textvariable=self.download_dir_var, padding=(10, 0))  # Added left padding
+        self.download_folder_label = ttk.Label(ds_frm, textvariable=self.download_dir_var, padding=(10, 0))
         self.download_folder_label.grid(row=1, column=0, sticky=W, padx=0, pady=2)
 
-        lbl = ttk.Label(ds_frm, text='Size of Downloaded Files:', padding=(10, 0))  # Added left padding
+        lbl = ttk.Label(ds_frm, text='Size of Downloaded Files:', padding=(10, 0))
         lbl.grid(row=2, column=0, sticky=W, pady=2)
 
         self.downloaded_size_var = StringVar(value="Calculating...")
-        lbl = ttk.Label(ds_frm, textvariable=self.downloaded_size_var, padding=(10, 0))  # Added left padding
+        lbl = ttk.Label(ds_frm, textvariable=self.downloaded_size_var, padding=(10, 0))
         lbl.grid(row=3, column=0, sticky=W, padx=0, pady=2)
 
         _func = self.open_discogs_folder
@@ -733,11 +734,9 @@ class DiscogsDataProcessorUI(ttk.Frame):
                               image='opened-folder', compound=LEFT)
         open_btn.grid(row=5, column=0, columnspan=2, sticky=EW)
 
-
-
         # Status panel
         status_cf = CollapsingFrame(left_panel)
-        status_cf.pack(fill=BOTH, expand=True, pady=1)  # Sol paneli doldur
+        status_cf.pack(fill=BOTH, expand=True, pady=1)
 
         status_frm = ttk.Frame(status_cf, padding=0)
         status_frm.columnconfigure(0, weight=1)
@@ -761,46 +760,39 @@ class DiscogsDataProcessorUI(ttk.Frame):
         self.pb.grid(row=1, column=0, columnspan=2, sticky=EW, padx=10, pady=5)
 
         self.prog_current_file_var = StringVar(value="File: none")
-        lbl = ttk.Label(status_frm, textvariable=self.prog_current_file_var, padding=(10, 0))  # Added left padding
+        lbl = ttk.Label(status_frm, textvariable=self.prog_current_file_var, padding=(10, 0))
         lbl.grid(row=2, column=0, columnspan=2, sticky=EW, pady=2)
 
-        lbl = ttk.Label(status_frm, textvariable=self.prog_time_started_var, padding=(10, 0))  # Added left padding
+        lbl = ttk.Label(status_frm, textvariable=self.prog_time_started_var, padding=(10, 0))
         lbl.grid(row=3, column=0, columnspan=2, sticky=EW, pady=2)
         self.prog_time_started_var.set('Not started')
 
-        lbl = ttk.Label(status_frm, textvariable=self.prog_speed_var, padding=(10, 0))  # Added left padding
+        lbl = ttk.Label(status_frm, textvariable=self.prog_speed_var, padding=(10, 0))
         lbl.grid(row=4, column=0, columnspan=2, sticky=EW, pady=2)
         self.prog_speed_var.set('Speed: 0.00 MB/s')
 
-        lbl = ttk.Label(status_frm, textvariable=self.prog_time_elapsed_var, padding=(10, 0))  # Added left padding
+        lbl = ttk.Label(status_frm, textvariable=self.prog_time_elapsed_var, padding=(10, 0))
         lbl.grid(row=5, column=0, columnspan=2, sticky=EW, pady=2)
         self.prog_time_elapsed_var.set('Elapsed: 0 sec')
 
-        lbl = ttk.Label(status_frm, textvariable=self.prog_time_left_var, padding=(10, 0))  # Added left padding
+        lbl = ttk.Label(status_frm, textvariable=self.prog_time_left_var, padding=(10, 0))
         lbl.grid(row=6, column=0, columnspan=2, sticky=EW, pady=2)
         self.prog_time_left_var.set('Left: 0 sec')
-
-
-
-
 
         stop_btn = ttk.Button(status_frm, command=self.stop_download, image='stop', text='Stop', compound=LEFT)
         stop_btn.grid(row=7, column=0, columnspan=2, sticky=EW)
 
         lbl_ver = ttk.Label(left_panel, text="V.0.1", style='bg.TLabel')
-        lbl_ver.pack(side='bottom', anchor='center', pady=2)  # Alt tarafa yerleşim
+        lbl_ver.pack(side='bottom', anchor='center', pady=2)
         lbl_name = ttk.Label(left_panel, text="ofurkancoban", style='bg.TLabel')
-        lbl_name.pack(side='bottom', anchor='center', pady=2)  # Alt tarafa yerleşim
+        lbl_name.pack(side='bottom', anchor='center', pady=2)
 
-        # Add avatar image or placeholder at the bottom of the left panel
-        # Avatar resmi ve isim
+        # Add avatar at the bottom (if exists)
         if 'avatar' in self.photoimages:
             lbl = ttk.Label(left_panel, image='avatar', style='bg.TLabel')
         else:
             lbl = ttk.Label(left_panel, text="Avatar", style='bg.TLabel')
-
-        lbl.pack(side='bottom', anchor='center', pady=2)  # Alt tarafa yerleşim
-
+        lbl.pack(side='bottom', anchor='center', pady=2)
 
         #######################################################################
         # RIGHT PANEL
@@ -888,6 +880,305 @@ class DiscogsDataProcessorUI(ttk.Frame):
         self.after(100, self.start_scraping)
         self.update_downloaded_size()
 
+    # -------------------------------------------------------------------------
+    # NEW FUNCTION: OPEN COVERART WINDOW
+    # -------------------------------------------------------------------------
+
+    def open_coverart_window(self):
+        """
+        Opens a new Toplevel window to:
+         1) Select an image
+         2) Choose YEAR + spelled-out MONTH from combobox
+         3) Select a .ttf font file (optional)
+         4) Apply coverart => writes "YEAR - MONTH" to the image
+         5) The output file is named after the selected MONTH and saved to ~/Discogs/Cover Arts
+        """
+        wm_win = ttk.Toplevel(self)
+        wm_win.title("Create Cover Art")
+
+        # Pencere boyutlarını belirleyin
+        window_width = 500
+        window_height = 500
+
+        # Ekran boyutlarını alın
+        screen_width = wm_win.winfo_screenwidth()
+        screen_height = wm_win.winfo_screenheight()
+
+        # Pencereyi ekranın ortasına yerleştirmek için koordinatları hesaplayın
+        center_x = int((screen_width - window_width) / 2)
+        center_y = int((screen_height - window_height) / 2)
+
+        # Geometry ayarını güncelleyin (örneğin: "500x500+center_x+center_y")
+        wm_win.geometry(f"{window_width}x{window_height}+{center_x}+{center_y}")
+        wm_win.resizable(False, False)
+
+        # Spelled-out months
+        month_choices = [
+            "JANUARY", "FEBRUARY", "MARCH", "APRIL",
+            "MAY", "JUNE", "JULY", "AUGUST",
+            "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"
+        ]
+
+        # By default, pick the current year and spelled-out month
+        now = datetime.now()
+        default_year = str(now.year)
+        default_month = month_choices[now.month - 1]
+
+        # Tk variables for form fields
+        self.wm_image_path = ttk.StringVar(value="")
+        self.wm_font_path = ttk.StringVar(value="")
+        self.wm_selected_year = ttk.StringVar(value=default_year)
+        self.wm_selected_month = ttk.StringVar(value=default_month)
+
+        # 1) Image file selection
+        frm_top = ttk.Frame(wm_win, padding=10)
+        frm_top.pack(fill="x", pady=5)
+        lbl_img = ttk.Label(frm_top, text="Select Image:", width=12)
+        lbl_img.pack(side="left")
+
+        ent_img = ttk.Entry(frm_top, textvariable=self.wm_image_path, width=25)
+        ent_img.pack(side="left", padx=5)
+
+        def browse_image():
+            filepath = filedialog.askopenfilename(
+                title="Select an Image",
+                filetypes=[
+                    ("Image files", "*.jpg *.jpeg *.png *.bmp *.gif *.tiff *.webp"),
+                    ("All files", "*.*")
+                ]
+            )
+            if filepath:
+                self.wm_image_path.set(filepath)
+
+        btn_img = ttk.Button(frm_top, text="Browse", command=browse_image)
+        btn_img.pack(side="left")
+
+        # 2) Year & spelled-out Month
+        frm_ym = ttk.Frame(wm_win, padding=10)
+        frm_ym.pack(fill="x", pady=5)
+
+        lbl_year = ttk.Label(frm_ym, text="Year:")
+        lbl_year.grid(row=0, column=0, padx=5, sticky="e")
+        cmb_year = ttk.Combobox(frm_ym, values=[str(y) for y in range(2000, now.year + 10)],
+                                textvariable=self.wm_selected_year, width=6)
+        cmb_year.grid(row=0, column=1, padx=5, sticky="w")
+
+        lbl_month = ttk.Label(frm_ym, text="Month:")
+        lbl_month.grid(row=0, column=2, padx=5, sticky="e")
+        cmb_month = ttk.Combobox(frm_ym, values=month_choices,
+                                 textvariable=self.wm_selected_month, width=10)
+        cmb_month.grid(row=0, column=3, padx=5, sticky="w")
+
+        # 3) Font selection (optional)
+        frm_font = ttk.Frame(wm_win, padding=10)
+        frm_font.pack(fill="x", pady=5)
+
+        lbl_font = ttk.Label(frm_font, text="Font (.ttf):")
+        lbl_font.pack(side="left")
+
+        ent_font = ttk.Entry(frm_font, textvariable=self.wm_font_path, width=25)
+        ent_font.pack(side="left", padx=5)
+
+        def browse_font():
+            font_file = filedialog.askopenfilename(
+                title="Select a TTF Font",
+                filetypes=[("TrueType Font", "*.ttf"), ("All files", "*.*")]
+            )
+            if font_file:
+                self.wm_font_path.set(font_file)
+
+        btn_font = ttk.Button(frm_font, text="Browse", command=browse_font)
+        btn_font.pack(side="left")
+
+        # 4) Apply coverart => new file = selected month
+        frm_btn = ttk.Frame(wm_win, padding=10)
+        frm_btn.pack(fill="x", pady=10)
+
+
+
+        # Assuming BASE_DIR is defined elsewhere, e.g.:
+        # BASE_DIR = Path(__file__).parent
+
+        def draw_text_with_drop_shadow(image, text, position, font, text_color, shadow_params):
+            """
+            Draws text onto an RGBA image with a drop shadow effect.
+
+            Parameters:
+              image         : PIL.Image (must be in RGBA mode)
+              text          : The text string to be drawn
+              position      : (x, y) tuple for the text's top-left position (will be converted to int)
+              font          : PIL.ImageFont instance
+              text_color    : RGBA tuple for the main text color, e.g. (255,255,255,255)
+              shadow_params : Dictionary with keys:
+                              - "angle": shadow angle in degrees (e.g. 30)
+                              - "distance": shadow distance in pixels (e.g. 3)
+                              - "spread": fraction (e.g. 0.20 for 20% of text size)
+                              - "blur_radius": Gaussian blur radius in pixels (e.g. 22)
+            """
+            angle = shadow_params.get("angle", 30)
+            distance = shadow_params.get("distance", 3)
+            spread = shadow_params.get("spread", 0.2)
+            blur_radius = shadow_params.get("blur_radius", 10)
+
+            # Compute offset based on angle and distance
+            dx = int(round(distance * math.cos(math.radians(angle))))
+            dy = int(round(distance * math.sin(math.radians(angle))))
+
+            # Convert the provided position to integers
+            base_x, base_y = int(round(position[0])), int(round(position[1]))
+
+            # Get the text bounding box using textbbox
+            dummy_draw = ImageDraw.Draw(image)
+            bbox = dummy_draw.textbbox((0, 0), text, font=font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+
+            # Calculate spread pixels based on the larger dimension
+            spread_pixels = int(max(text_width, text_height) * spread)
+
+            # Create a grayscale mask for the text
+            mask_size = (text_width + 2 * spread_pixels, text_height + 2 * spread_pixels)
+            mask = Image.new("L", mask_size, 0)
+            mask_draw = ImageDraw.Draw(mask)
+            mask_draw.text((spread_pixels, spread_pixels), text, font=font, fill=255)
+
+            # Apply spread (using MaxFilter) if needed
+            if spread_pixels > 0:
+                filter_size = spread_pixels * 2 + 1
+                mask = mask.filter(ImageFilter.MaxFilter(filter_size))
+            # Apply Gaussian blur for the drop shadow effect
+            mask = mask.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+
+            # Create an image for the shadow using the mask
+            shadow_color = (0, 0, 0, 255)
+            shadow = Image.new("RGBA", mask_size, shadow_color)
+            shadow.putalpha(mask)
+
+            # Calculate shadow position; subtract spread_pixels and add the offset (dx, dy)
+            shadow_position = (base_x - spread_pixels + dx, base_y - spread_pixels + dy)
+            image.alpha_composite(shadow, dest=shadow_position)
+
+            # Finally, draw the main text at the original (integer) position
+            draw = ImageDraw.Draw(image)
+            draw.text((base_x, base_y), text, font=font, fill=text_color)
+
+        def apply_coverart():
+            # Get the image path from the UI (assume self.wm_image_path is a StringVar)
+            img_path = self.wm_image_path.get().strip()
+            # If no valid image is selected, use the default 'kaggle_art.png' from the assets folder.
+            if not img_path or not os.path.exists(img_path):
+                default_img = BASE_DIR / 'assets' / 'kaggle_art.png'
+                if default_img.exists():
+                    img_path = str(default_img)
+                else:
+                    messagebox.showerror("Error", "No image selected and default image not found!")
+                    return
+
+            font_path = self.wm_font_path.get().strip()
+            year_val = self.wm_selected_year.get()
+            month_val = self.wm_selected_month.get()  # e.g. "JANUARY"
+
+            # Prepare the two lines: year on top, month below.
+            year_text = year_val
+            month_text = month_val
+
+            # Font sizes
+            year_font_size = 150
+            month_font_size = 150
+
+            # Load the TTF font if provided, or try default fonts.
+            try:
+                if font_path and os.path.exists(font_path):
+                    year_font = ImageFont.truetype(font_path, size=year_font_size)
+                    month_font = ImageFont.truetype(font_path, size=month_font_size)
+                else:
+                    try:
+                        year_font = ImageFont.truetype("assets/dreamorphanagehv-regular.otf", size=year_font_size)
+                        month_font = ImageFont.truetype("assets/dreamorphanagehv-regular.otf", size=month_font_size)
+                    except Exception:
+                        year_font = ImageFont.load_default()
+                        month_font = ImageFont.load_default()
+            except Exception as e:
+                self.log_to_console(f"Error loading font: {e}", "ERROR")
+                messagebox.showerror("Font Error", f"Could not load font:\n{e}")
+                return
+
+            try:
+                with Image.open(img_path) as img:
+                    # Ensure image is in RGBA mode for transparency support.
+                    if img.mode != "RGBA":
+                        img = img.convert("RGBA")
+
+                    # Set up drop shadow parameters:
+                    shadow_params = {
+                        "angle": 30,  # 30 degrees
+                        "distance": 1,  # 3px
+                        "spread": 0.002,  # 20% spread
+                        "blur_radius": 10  # 22px blur (size)
+                    }
+                    text_color = (255, 255, 255, 255)  # White
+
+                    # Create a drawing object to compute text sizes.
+                    draw = ImageDraw.Draw(img)
+                    year_bbox = draw.textbbox((0, 0), year_text, font=year_font)
+                    year_width = year_bbox[2] - year_bbox[0]
+                    year_height = year_bbox[3] - year_bbox[1]
+                    month_bbox = draw.textbbox((0, 0), month_text, font=month_font)
+                    month_width = month_bbox[2] - month_bbox[0]
+                    month_height = month_bbox[3] - month_bbox[1]
+
+                    line_spacing = 50  # Spacing between the two lines
+                    total_text_height = year_height + line_spacing + month_height
+                    block_width = max(year_width, month_width)
+
+                    # Calculate starting coordinates to center the text block,
+                    # and add a vertical offset (y_offset) to move the text downward.
+                    y_offset = 150  # Adjust this value as needed
+                    x_start = (img.width - block_width) / 2
+                    y_start = (img.height - total_text_height) / 2 + y_offset
+
+                    # Draw each line with the drop shadow effect.
+                    draw_text_with_drop_shadow(
+                        image=img,
+                        text=year_text,
+                        position=(x_start + (block_width - year_width) / 2, y_start),
+                        font=year_font,
+                        text_color=text_color,
+                        shadow_params=shadow_params
+                    )
+                    draw_text_with_drop_shadow(
+                        image=img,
+                        text=month_text,
+                        position=(x_start + (block_width - month_width) / 2, y_start + year_height + line_spacing),
+                        font=month_font,
+                        text_color=text_color,
+                        shadow_params=shadow_params
+                    )
+
+                    # Save the resulting image in the "Cover Arts" folder inside the Discogs folder.
+                    discogs_folder = Path(self.download_dir_var.get())
+                    cover_arts_folder = discogs_folder / "Cover Arts"
+                    cover_arts_folder.mkdir(parents=True, exist_ok=True)
+                    original_ext = os.path.splitext(img_path)[1]  # e.g., ".jpg" or ".png"
+                    output_filename = f"{year_val}-{month_val.upper()}{original_ext}"
+                    output_path = cover_arts_folder / output_filename
+
+                    img.save(output_path)
+
+                self.log_to_console(f"Cover art created(year & month) => {output_path}", "INFO")
+                messagebox.showinfo("Cover Art", f"Cover Art image saved as:\n{output_path}")
+                wm_win.destroy()
+
+            except Exception as e:
+                self.log_to_console(f"Error creating image: {e}", "ERROR")
+                messagebox.showerror("Image Error", f"Could not create cover art:\n{e}")
+
+        btn_apply = ttk.Button(frm_btn, text="Apply", bootstyle="success", command=apply_coverart)
+        btn_apply.pack(side="left", padx=5)
+
+        btn_close = ttk.Button(frm_btn, text="Close", command=wm_win.destroy)
+        btn_close.pack(side="left", padx=5)
+
     ###########################################################################
     #  EKLENDİ: Artık update_progress_bar sınıf içinde bir metot
     ###########################################################################
@@ -912,9 +1203,9 @@ class DiscogsDataProcessorUI(ttk.Frame):
             if downloaded_size > 0:
                 percentage = (downloaded_size / total_size) * 100
                 left = (total_size - downloaded_size) / (downloaded_size / elapsed) if downloaded_size > 0 else 0
-                left_minutes = left // 60
-                left_seconds = left % 60
-                self.after(0, self.prog_time_left_var.set, f"Left: {int(left_minutes)} min {int(left_seconds)} sec")
+                left_minutes = int(left // 60)
+                left_seconds = int(left % 60)
+                self.after(0, self.prog_time_left_var.set, f"Left: {left_minutes} min {left_seconds} sec")
                 self.after(0, self.prog_message_var.set, f"Downloading: {percentage:.2f}%")
 
     def open_settings(self):
@@ -991,10 +1282,11 @@ class DiscogsDataProcessorUI(ttk.Frame):
             ("- Fetch Data: Fetches the latest datasets from Discogs S3.\n", "bullet"),
             ("- Download: Downloads the selected datasets.\n", "bullet"),
             ("- Extract: Extracts the downloaded .gz files to .xml format.\n", "bullet"),
-            ("- Convert: Converts the .xml files to CSV using a streaming method.\n", "bullet"),
-            ("- Delete: Deletes the selected files and resets status to ✖.\n", "bullet"),
+            ("- Convert: Converts the .xml files to CSV.\n", "bullet"),
+            ("- Delete: Deletes the selected files.\n", "bullet"),
             ("- Settings: Opens folder selection dialog.\n", "bullet"),
             ("- Info: Shows this user guide.\n", "bullet"),
+            ("- Create Cover Art: Allows you to pick an image, a year/month, and place text.\n", "bullet"),
             ("\nUsage Steps\n", "subheading"),
             ("1. Setting the Download Folder:\n", "normal"),
             ("   - Click the Settings button.\n", "bullet"),
@@ -1082,8 +1374,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         self.scroll_message_var.set(f"→ {now}")
 
         self.update_downloaded_size()
-        self.log_to_console("Table updated.", "INFO")  # tablo bitti mesajı
-
+        self.log_to_console("Table updated.", "INFO")
 
     def position_checkbuttons(self):
         self.update_idletasks()
@@ -1207,7 +1498,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
             # Log the detailed summary
             self.log_to_console(completion_message, "INFO")
-            self.log_to_console("Table updated.", "INFO")  # tablo bitti mesajı
+            self.log_to_console("Table updated.", "INFO")
 
             # Show popup with summary
             messagebox.showinfo("Deletion Complete", completion_message)
@@ -1229,7 +1520,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
         # Configure tags for alternating colors
         self.console_text.tag_configure("even_line", foreground="white")
-        self.console_text.tag_configure("odd_line", foreground="#63b4f4")  # Light blue
+        self.console_text.tag_configure("odd_line", foreground="#63b4f4")
 
         # Apply tag based on line number
         tag = "even_line" if current_line % 2 == 0 else "odd_line"
@@ -1241,26 +1532,19 @@ class DiscogsDataProcessorUI(ttk.Frame):
         self.console_text.see('end')
         self.console_text.config(state='disabled')
 
-        # Update scroll message with truncated content if necessary
-        message_content = message.strip()
-        if len(message_content) > 80:
-            message_content = message_content[:80] + '...'
-        self.scroll_message_var.set(f"Log: {message_content}")
+        # Update scroll message with truncated content
+        msg_short = message.strip()
+        if len(msg_short) > 80:
+            msg_short = msg_short[:80] + '...'
+        self.scroll_message_var.set(f"Log: {msg_short}")
 
         # Save log to file
         try:
-            # Always save to the Discogs folder
             log_path = Path(self.download_dir_var.get()) / "discogs_data.log"
-
-            # Create parent directory if it doesn't exist
             log_path.parent.mkdir(parents=True, exist_ok=True)
-
-            # Append the log message to the file
             with open(log_path, 'a', encoding='utf-8') as f:
                 f.write(formatted_message)
-
         except Exception as e:
-            # If there's an error saving the log, print to console but don't raise the error
             print(f"Error saving log to file: {e}")
 
     def mark_downloaded_files(self, data_df):
@@ -1286,10 +1570,9 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
                 # If it's .gz, check for extracted .xml
                 if file_path.suffix.lower() == ".gz":
-                    extracted_file = file_path.with_suffix('')  # .gz -> .xml
+                    extracted_file = file_path.with_suffix('')
                     if extracted_file.exists() and extracted_file.suffix.lower() == ".xml":
                         extracted_status = "✔"
-                        # If .csv also exists, mark processed
                         csv_file = extracted_file.with_suffix('.csv')
                         if csv_file.exists():
                             processed_status = "✔"
@@ -1312,7 +1595,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
         self.stop_flag = False
         folder_name = last_modified.strftime("%Y-%m")
 
-        # Log download start information
         self.log_to_console(f"Starting download of {filename}", "INFO")
         self.log_to_console(f"Destination folder: {folder_name}", "INFO")
         self.log_to_console(f"Source URL: {url}", "INFO")
@@ -1321,13 +1603,11 @@ class DiscogsDataProcessorUI(ttk.Frame):
         Thread(target=self.download_file, args=(url, filename, folder_name), daemon=True).start()
 
     def parallel_download(self, url, filename, folder_name, total_size):
-        """Multi-threaded download implementation."""
         downloads_dir = Path(self.download_dir_var.get()) / "Datasets"
         target_dir = downloads_dir / folder_name
         target_dir.mkdir(parents=True, exist_ok=True)
         file_path = target_dir / filename
 
-        # Log download details
         human_size = human_readable_size(total_size)
         self.log_to_console(f"File size: {human_size}", "INFO")
         self.log_to_console(f"Target path: {file_path}", "INFO")
@@ -1360,7 +1640,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 self.log_to_console(f"Error in thread {idx}: {e}", "ERROR")
 
         start_time = datetime.now()
-        timeout = 9999  # 5-minute timeout
+        timeout = 9999  # Very large, effectively no real "timeout"
         self.prog_time_started_var.set(f'Started at: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
         threads = []
         for i in range(num_threads):
@@ -1380,7 +1660,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
             time.sleep(0.5)
             downloaded_size = sum(thread_progress)
 
-            # Update progress
             self.update_progress_bar(downloaded_size, total_size)
             self.update_time_info(downloaded_size, total_size, start_time)
 
@@ -1405,6 +1684,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
     def download_file(self, url, filename, folder_name):
         self.start_status_indicator()  # Start blinking
+        file_path = None
         try:
             self.prog_message_var.set('Preparing download...')
             head = requests.head(url)
@@ -1487,7 +1767,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
             total_size = int(response.headers.get('content-length', 0))
             human_size = human_readable_size(total_size)
 
-            # Log download details
             self.log_to_console(f"File size: {human_size}", "INFO")
             self.log_to_console(f"Target path: {file_path}", "INFO")
 
@@ -1496,7 +1775,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
             self.pb["maximum"] = total_size
             self.pb.update()
 
-            # -- Dosya Adını Status Alanına Yazalım:
             self.prog_current_file_var.set(f"File: {filename}")
 
             start_time = datetime.now()
@@ -1517,7 +1795,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
                     speed = (downloaded_size / elapsed) / (1024 * 1024) if elapsed > 0 else 0.0
                     self.prog_speed_var.set(f'Speed: {speed:.2f} MB/s')
 
-                    # Yüzde hesapla
                     if total_size > 0 and downloaded_size > 0:
                         percentage = (downloaded_size / total_size) * 100
                         left = int(
@@ -1525,8 +1802,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
                         left_minutes = left // 60
                         left_seconds = left % 60
                         self.prog_time_left_var.set(f'Left: {left_minutes} min {left_seconds} sec')
-
-                        # -- Status'taki üst satıra Downloading: XX% yazmak:
                         self.prog_message_var.set(f'Downloading: {percentage:.2f}%')
 
             self.prog_message_var.set('Idle...')
@@ -1553,7 +1828,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
         self.log_to_console("Operation Stopped. Cleaning up...", "WARNING")
         self.prog_message_var.set('Stopping...')
 
-        # Clean up any partial download files
         downloads_dir = Path(self.download_dir_var.get()) / "Datasets"
         if downloads_dir.exists():
             for folder in downloads_dir.glob("*"):
@@ -1615,35 +1889,24 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 self.start_download(url, filename, last_modified)
 
     def extract_gz_file_with_progress(self, file_path):
-        """
-        .gz dosyasını açma (extraction) işlemi sırasında:
-          - Progress bar % değeri
-          - Status Panel → Started at: ....
-          - Status Panel → Elapsed: ....
-        güncellenir.
-        """
         import time
-        from datetime import datetime, timedelta
+        from datetime import datetime
         import queue
 
         try:
-            output_path = file_path.with_suffix('')  # This is the XML file path
+            output_path = file_path.with_suffix('')
             total_size = file_path.stat().st_size
 
             progress_queue = queue.Queue()
-
-            # Extraction başlama zamanını al ve status panelini güncelle
             start_time = datetime.now()
             self.prog_time_started_var.set(f"Started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
             def extract_worker():
                 try:
-                    # First, create a temporary XML file
                     temp_output_path = output_path.with_suffix('.xml.tmp')
-
                     with gzip.open(file_path, 'rb') as f_in, open(temp_output_path, 'wb') as f_out:
                         while True:
-                            if self.stop_flag:  # Check stop flag
+                            if self.stop_flag:
                                 progress_queue.put(('stopped', None))
                                 return
 
@@ -1652,12 +1915,10 @@ class DiscogsDataProcessorUI(ttk.Frame):
                                 break
                             f_out.write(chunk)
 
-                            # Sıkıştırılmış akışta anlık konum (compressed)
                             compressed_pos = f_in.fileobj.tell()
                             percent = (compressed_pos / total_size) * 100 if total_size else 0
                             progress_queue.put(('progress', percent))
 
-                    # Only rename to final XML if extraction completes successfully
                     if temp_output_path.exists():
                         temp_output_path.rename(output_path)
                     progress_queue.put(('done', None))
@@ -1665,18 +1926,13 @@ class DiscogsDataProcessorUI(ttk.Frame):
                     progress_queue.put(('error', str(e)))
 
             def update_progress():
-                """
-                Kuyruktan gelen mesajlara göre progress bar ve mesajları günceller,
-                her döngüde geçen süreyi (Elapsed) hesaplar.
-                """
-                try:
-                    # Update elapsed time
-                    elapsed = datetime.now() - start_time
-                    mins = int(elapsed.total_seconds()) // 60
-                    secs = int(elapsed.total_seconds()) % 60
-                    self.prog_time_elapsed_var.set(f"Elapsed: {mins} min {secs} sec")
+                elapsed = datetime.now() - start_time
+                mins = int(elapsed.total_seconds()) // 60
+                secs = int(elapsed.total_seconds()) % 60
+                self.prog_time_elapsed_var.set(f"Elapsed: {mins} min {secs} sec")
 
-                    while True:
+                while True:
+                    try:
                         msg_type, value = progress_queue.get_nowait()
                         if msg_type == 'progress':
                             self.pb["value"] = value
@@ -1687,68 +1943,51 @@ class DiscogsDataProcessorUI(ttk.Frame):
                         elif msg_type == 'stopped':
                             self.pb["value"] = 0
                             self.prog_message_var.set('Extraction stopped')
-                            # Delete both temporary and final XML files if they exist
                             temp_output_path = output_path.with_suffix('.xml.tmp')
                             if temp_output_path.exists():
-                                try:
-                                    temp_output_path.unlink()
-                                    self.log_to_console(f"Deleted temporary file: {temp_output_path}", "INFO")
-                                except Exception as e:
-                                    self.log_to_console(f"Error deleting temporary file: {e}", "ERROR")
+                                temp_output_path.unlink()
+                                self.log_to_console(f"Deleted temporary file: {temp_output_path}", "INFO")
                             if output_path.exists():
-                                try:
-                                    output_path.unlink()
-                                    self.log_to_console(f"Deleted incomplete XML file: {output_path}", "INFO")
-                                except Exception as e:
-                                    self.log_to_console(f"Error deleting XML file: {e}", "ERROR")
+                                output_path.unlink()
+                                self.log_to_console(f"Deleted incomplete XML file: {output_path}", "INFO")
                             return False
                         elif msg_type == 'error':
                             self.log_to_console(f"Error extracting {file_path}: {value}", "ERROR")
-                except queue.Empty:
-                    pass
+                        else:
+                            pass
+                    except queue.Empty:
+                        break
                 return True
 
-            # Asıl işi yapacak thread
             extract_thread = Thread(target=extract_worker)
             extract_thread.start()
 
-            # Başlangıçta progress bar sıfırla
             self.pb["value"] = 0
             self.prog_message_var.set(f'Extracting {file_path.name}...')
 
-            # Ana loop: join() yerine canlı döngüyle UI güncelle
             while extract_thread.is_alive():
-                if self.stop_flag:  # Check stop flag in main loop
+                if self.stop_flag:
                     break
-                if not update_progress():  # If stopped via progress update
+                if not update_progress():
                     break
-                self.update()  # Tkinter arayüzünü donmadan güncel tut
-                time.sleep(0.1)  # Reduced update frequency to every 100ms
+                self.update()
+                time.sleep(0.1)
 
-            # Son kalan mesajları (done/error) al
             if not self.stop_flag:
                 update_progress()
-                # Final elapsed time update
                 elapsed = datetime.now() - start_time
                 mins = int(elapsed.total_seconds()) // 60
                 secs = int(elapsed.total_seconds()) % 60
                 self.prog_time_elapsed_var.set(f"Elapsed: {mins} min {secs} sec")
                 return True
             else:
-                # Additional cleanup when stopped
                 temp_output_path = output_path.with_suffix('.xml.tmp')
                 if temp_output_path.exists():
-                    try:
-                        temp_output_path.unlink()
-                        self.log_to_console(f"Deleted temporary file: {temp_output_path}", "INFO")
-                    except Exception as e:
-                        self.log_to_console(f"Error deleting temporary file: {e}", "ERROR")
+                    temp_output_path.unlink()
+                    self.log_to_console(f"Deleted temporary file: {temp_output_path}", "INFO")
                 if output_path.exists():
-                    try:
-                        output_path.unlink()
-                        self.log_to_console(f"Deleted incomplete XML file: {output_path}", "INFO")
-                    except Exception as e:
-                        self.log_to_console(f"Error deleting XML file: {e}", "ERROR")
+                    output_path.unlink()
+                    self.log_to_console(f"Deleted incomplete XML file: {output_path}", "INFO")
                 self.log_to_console(f"Extraction stopped for {file_path.name}", "WARNING")
                 return False
 
@@ -1762,7 +2001,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         self.after(2000, self.extract_selected_thread)
 
     def extract_selected_thread(self):
-        self.start_status_indicator()  # Start blinking
+        self.start_status_indicator()
         try:
             self.prog_message_var.set('Extracting now...')
             extracted_files = []
@@ -1776,12 +2015,10 @@ class DiscogsDataProcessorUI(ttk.Frame):
             for item in checked_items:
                 if self.stop_flag:
                     self.log_to_console("Extraction stopped by user", "WARNING")
-                    # Clean up any partial files
                     downloads_dir = Path(self.download_dir_var.get()) / "Datasets"
                     if downloads_dir.exists():
                         for folder in downloads_dir.glob("*"):
                             if folder.is_dir():
-                                # Clean up XML and temporary files
                                 for file in folder.glob("*.xml*"):
                                     try:
                                         file.unlink()
@@ -1789,7 +2026,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
                                     except Exception as e:
                                         self.log_to_console(f"Error deleting file {file}: {e}", "ERROR")
 
-                    # Reset UI elements
                     self.pb["value"] = 0
                     self.prog_message_var.set('Idle...')
                     self.prog_current_file_var.set("File: none")
@@ -1814,7 +2050,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                     (self.data_df["Downloaded"] == downloaded_val) &
                     (self.data_df["Extracted"] == extracted_val) &
                     (self.data_df["Processed"] == processed_val)
-                    ]
+                ]
                 if not row_data.empty:
                     url = row_data["URL"].values[0]
                     folder_name = row_data["month"].values[0]
@@ -1822,9 +2058,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                     file_path = Path(self.download_dir_var.get()) / "Datasets" / folder_name / filename
 
                     if file_path.suffix.lower() == ".gz":
-                        # +++ EKLENDİ: File: alanına ilgili dosya adını yazalım
                         self.prog_current_file_var.set(f"File: {file_path.name}")
-
                         success = self.extract_gz_file_with_progress(file_path)
                         if success:
                             output_path = file_path.with_suffix('')
@@ -1835,7 +2069,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
                         else:
                             failed_files.append(file_path)
                             self.log_to_console(f"Error or stopped extracting {file_path}.", "ERROR")
-                            # Clean up any partial XML files
                             output_path = file_path.with_suffix('')
                             temp_path = output_path.with_suffix('.xml.tmp')
                             for cleanup_path in [output_path, temp_path]:
@@ -1879,7 +2112,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 "error"
             ))
 
-        self.stop_status_indicator()  # Stop blinking when done
+        self.stop_status_indicator()
 
     def show_centered_popup(self, title, message, message_type="info"):
         if message_type == "info":
@@ -1900,42 +2133,30 @@ class DiscogsDataProcessorUI(ttk.Frame):
         except queue.Empty:
             self.after(100, self.handle_extract_status, q)
 
-    ###########################################################################
-    #                           CONVERT SELECTED
-    ###########################################################################
     def convert_selected(self):
-        self.start_status_indicator()  # Start blinking
+        self.start_status_indicator()
         try:
-            """Start the XML to CSV conversion process."""
-            self.stop_flag = False  # Reset stop flag
-
+            self.stop_flag = False
             from queue import Queue, Empty
             import time
-            from datetime import datetime
 
-            # Check if any items are selected
             checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
             if not checked_items:
                 self.log_to_console("No file selected for conversion!", "WARNING")
                 return
 
-            # Initialize queue for thread communication
             progress_queue = Queue()
-
-            # Define start_time here to track elapsed time
             start_time = datetime.now()
 
             def convert_thread():
-                converted_files = []  # Successfully converted CSVs
+                converted_files = []
                 try:
                     for item in checked_items:
                         if self.stop_flag:
                             self.log_to_console("Conversion stopped by user", "WARNING")
-                            # Clean up any partial files
                             self.cleanup_partial_files()
                             return
 
-                        # Retrieve item details from the treeview
                         values = self.tree.item(item, "values")
                         month_val = values[1]
                         content_val = values[2]
@@ -1951,7 +2172,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
                             self.log_to_console("File already processed. Skipping...", "INFO")
                             continue
 
-                        # Locate the corresponding row in data_df
                         row_data = self.data_df[
                             (self.data_df["month"] == month_val) &
                             (self.data_df["content"] == content_val) &
@@ -1959,7 +2179,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                             (self.data_df["Downloaded"] == downloaded_val) &
                             (self.data_df["Extracted"] == extracted_val) &
                             (self.data_df["Processed"] == processed_val)
-                            ]
+                        ]
                         if row_data.empty:
                             continue
 
@@ -1967,22 +2187,19 @@ class DiscogsDataProcessorUI(ttk.Frame):
                         folder_name = row_data["month"].values[0]
                         filename = os.path.basename(url)
 
-                        # Determine the extracted XML file path
                         extracted_file = (
-                                Path(self.download_dir_var.get())
-                                / "Datasets"
-                                / folder_name
-                                / filename
-                        ).with_suffix("")  # e.g., discogs_2023-01-01_releases.xml
+                            Path(self.download_dir_var.get())
+                            / "Datasets"
+                            / folder_name
+                            / filename
+                        ).with_suffix("")
 
                         if not extracted_file.exists():
                             self.log_to_console(f"Extracted XML not found: {extracted_file}", "ERROR")
                             continue
 
-                        # Update UI with current file
                         progress_queue.put(('file_change', extracted_file.name))
 
-                        # Start chunking
                         progress_queue.put(('chunking_start', None))
                         try:
                             self.log_to_console(f"Chunking XML by type: {extracted_file}", "INFO")
@@ -1995,14 +2212,11 @@ class DiscogsDataProcessorUI(ttk.Frame):
                         except Exception as e:
                             self.log_to_console(f"Error chunking {extracted_file}: {e}", "ERROR")
                             continue
-
-                        # Chunking done
                         progress_queue.put(('chunking_done', None))
 
-                        # Convert chunks to CSV
                         chunk_folder = extracted_file.parent / f"chunked_{content_val}"
                         combined_csv = extracted_file.with_suffix(".csv")
-                        record_tag = content_val[:-1]  # e.g., "releases" -> "release"
+                        record_tag = content_val[:-1]
 
                         def local_progress_cb(current_step, total_steps):
                             pct = (current_step / total_steps) * 100 if total_steps else 0
@@ -2017,29 +2231,22 @@ class DiscogsDataProcessorUI(ttk.Frame):
                                 logger=self.log_to_console,
                                 progress_cb=local_progress_cb
                             )
-                            # Remove chunk folder after conversion
                             shutil.rmtree(chunk_folder, ignore_errors=True)
-
-                            # Update processed status
                             self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✔"
                             self.log_to_console(f"Successfully created {combined_csv}", "INFO")
                             converted_files.append(combined_csv)
                         except Exception as e:
                             self.log_to_console(f"Error converting {extracted_file}: {e}", "ERROR")
 
-                    # Conversion completed for all selected files
                     self.log_to_console("Conversion completed for selected files.", "INFO")
                 except Exception as e:
                     self.log_to_console(f"Error in convert_thread: {e}", "ERROR")
                 finally:
-                    # Signal completion
                     progress_queue.put(('done', converted_files))
 
-            # Start the conversion thread
             th = Thread(target=convert_thread, daemon=True)
             th.start()
 
-            # Update the UI based on the queue
             while th.is_alive():
                 try:
                     while True:
@@ -2047,19 +2254,15 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
                         if msg_type == 'file_change':
                             self.prog_current_file_var.set(f"File: {value}")
-
                         elif msg_type == 'chunking_start':
                             self.prog_message_var.set("Chunking in progress...")
                             self.pb["value"] = 0
-
                         elif msg_type == 'chunking_done':
                             self.prog_message_var.set("Starting conversion...")
                             self.pb["value"] = 0
-
                         elif msg_type == 'conversion_progress':
                             self.pb["value"] = value
                             self.prog_message_var.set(f"Converting: {value:.1f}%")
-
                         elif msg_type == 'done':
                             converted_files = value
                             if converted_files:
@@ -2078,14 +2281,12 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 except Empty:
                     pass
 
-                # Update elapsed time
                 now = datetime.now()
                 elapsed_sec = (now - start_time).total_seconds()
                 mins = int(elapsed_sec) // 60
                 secs = int(elapsed_sec) % 60
                 self.prog_time_elapsed_var.set(f"Elapsed: {mins} min {secs} sec")
 
-                # Refresh the UI
                 self.update()
                 time.sleep(0.05)
 
@@ -2093,14 +2294,11 @@ class DiscogsDataProcessorUI(ttk.Frame):
             try:
                 while True:
                     msg_type, value = progress_queue.get_nowait()
-
                     if msg_type == 'file_change':
                         self.prog_current_file_var.set(f"File: {value}")
-
                     elif msg_type == 'conversion_progress':
                         self.pb["value"] = value
                         self.prog_message_var.set(f"Converting: {value:.1f}%")
-
                     elif msg_type == 'done':
                         converted_files = value
                         if converted_files:
@@ -2119,7 +2317,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
             except Empty:
                 pass
 
-            # Finalize UI updates
             total_elapsed = (datetime.now() - start_time).total_seconds()
             total_mins = int(total_elapsed) // 60
             total_secs = int(total_elapsed) % 60
@@ -2129,7 +2326,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
             self.populate_table(self.data_df)
 
         except Exception as e:
-            self.stop_status_indicator()  # Stop blinking on error
+            self.stop_status_indicator()
             self.log_to_console(f"Error in convert_selected: {e}", "ERROR")
             self.show_centered_popup(
                 "Conversion Error",
@@ -2137,7 +2334,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 "error"
             )
 
-        self.stop_status_indicator()  # Stop blinking when done
+        self.stop_status_indicator()
 
     def get_folder_size(self, folder_path):
         total_size = 0
@@ -2245,14 +2442,13 @@ class DiscogsDataProcessorUI(ttk.Frame):
         """Toggle the status indicator visibility"""
         if self.status_indicator_active:
             self.status_indicator_visible = not self.status_indicator_visible
-            color = '#2ecc71' if self.status_indicator_visible else '#27ae60'  # Different shades of green
+            color = '#2ecc71' if self.status_indicator_visible else '#27ae60'
             self.status_indicator.itemconfig(self.indicator_oval, fill=color)
             self.blink_after_id = self.after(500, self.blink_status_indicator)
 
 
 def main():
     import sys
-    # Initialize columns including "Processed"
     empty_df = pd.DataFrame(columns=[
         "month", "content", "size", "last_modified", "key", "URL",
         "Downloaded", "Extracted", "Processed"
@@ -2261,16 +2457,13 @@ def main():
     empty_df["Extracted"] = "✖"
     empty_df["Processed"] = "✖"
 
-    # Use the "darkly" theme for a dark appearance
     app = ttk.Window("Discogs Data Processor", themename="darkly")
     primary_color = app.style.colors.primary
 
-    # Uygulamanın ikonu için yine BASE_DIR kullanıyoruz:
     icon_path = BASE_DIR / "assets" / "app_icon.png"
     if icon_path.exists():
         app.iconphoto(True, ttk.PhotoImage(file=icon_path))
 
-    # Optionally, if you want Treeview heading text to be white on dark:
     style = ttk.Style()
     style.configure("Treeview.Heading", background=primary_color, foreground="white")
 
