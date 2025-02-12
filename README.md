@@ -97,6 +97,7 @@ Discogs/
 │   │   ├── discogs_YYYY-MM-DD_type.xml
 │   │   └── discogs_YYYY-MM-DD_type.csv
 │   └── ...
+├── Cover Arts/
 └── discogs_data.csv
 └── discogs_data.log
 ```
