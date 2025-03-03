@@ -734,6 +734,15 @@ class DiscogsDataProcessorUI(ttk.Frame):
                               image='opened-folder', compound=LEFT)
         open_btn.grid(row=5, column=0, columnspan=2, sticky=EW)
 
+        # UI başlatılırken __init__ metodunda, örneğin sol panelin altına ekleyebilirsiniz:
+        self.scrape_year_var = StringVar(value=str(datetime.now().year))
+        years = [str(year) for year in range(2008, datetime.now().year + 1)]
+        year_frame = ttk.Frame(self, padding=10)
+        year_frame.pack(side=TOP, fill=X)
+        ttk.Label(year_frame, text="Year:").pack(side=LEFT, padx=(0, 5))
+        year_combobox = ttk.Combobox(year_frame, values=years, textvariable=self.scrape_year_var, width=6)
+        year_combobox.pack(side=LEFT)
+        year_combobox.bind("<<ComboboxSelected>>", self.on_year_change)
         # Status panel
         status_cf = CollapsingFrame(left_panel)
         status_cf.pack(fill=BOTH, expand=True, pady=1)
@@ -883,7 +892,53 @@ class DiscogsDataProcessorUI(ttk.Frame):
     # -------------------------------------------------------------------------
     # NEW FUNCTION: OPEN COVERART WINDOW
     # -------------------------------------------------------------------------
+    def scrape_years_from_html(url):
+        """
+        Verilen URL'deki HTML içeriğinden <a> etiketlerindeki 4 basamaklı yıl değerlerini (örn. "2021/") kazır.
+        """
+        try:
+            response = requests.get(url)
+            response.raise_for_status()
+            html = response.text
+            # <a ...>2021/</a> desenindeki yılı yakalar
+            years = re.findall(r'<a[^>]*>(\d{4})/</a>', html)
+            return sorted(set(years))
+        except Exception as e:
+            print(f"Error scraping years: {e}")
+            return []
 
+    def on_year_change(self, event):
+        selected_year = self.scrape_year_var.get()
+        self.log_to_console(f"Yeni yıl seçildi: {selected_year}", "INFO")
+        # Örneğin, S3’te "data/2021/" dizinini kullanarak dosyaları listeleyelim:
+        target_prefix = f"data/{selected_year}/"
+        self.update_files_for_year(target_prefix)
+    def update_files_for_year(self, directory_prefix):
+        """
+        S3'te belirtilen prefix (ör: "data/2021/") ile ilgili dosyaları listeler,
+        data_df'yi günceller ve tabloyu yeniden populate eder.
+        """
+        base_url = "https://discogs-data-dumps.s3.us-west-2.amazonaws.com/"
+        try:
+            # list_files_in_directory fonksiyonu S3'dan dosya bilgilerini getiriyor:
+            data_df = list_files_in_directory(base_url, directory_prefix)
+            if not data_df.empty:
+                data_df["last_modified"] = pd.to_datetime(data_df["last_modified"])
+                data_df["month"] = data_df["last_modified"].dt.to_period("M").astype(str)
+                data_df = data_df[data_df["content"] != "checksum"]
+                content_order = {"artists": 1, "labels": 2, "masters": 3, "releases": 4}
+                data_df["content_order"] = data_df["content"].map(content_order)
+                data_df = data_df.sort_values(by=["month", "content_order"], ascending=[False, True])
+                data_df.drop(columns=["content_order"], inplace=True)
+                data_df = self.mark_downloaded_files(data_df)
+                self.data_df = data_df
+                self.populate_table(data_df)
+                self.save_to_file()
+                self.log_to_console(f"{directory_prefix} içindeki dosyalar güncellendi.", "INFO")
+            else:
+                self.log_to_console("Seçili yılda dosya bulunamadı.", "WARNING")
+        except Exception as e:
+            self.log_to_console(f"update_files_for_year hatası: {e}", "ERROR")
     def open_coverart_window(self):
         """
         Opens a new Toplevel window to:
@@ -959,8 +1014,13 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
         lbl_year = ttk.Label(frm_ym, text="Year:")
         lbl_year.grid(row=0, column=0, padx=5, sticky="e")
-        cmb_year = ttk.Combobox(frm_ym, values=[str(y) for y in range(2000, now.year + 10)],
-                                textvariable=self.wm_selected_year, width=6)
+        now = datetime.now()
+        cmb_year = ttk.Combobox(
+            frm_ym,
+            values=[str(y) for y in range(2008, now.year + 10)],
+            textvariable=self.wm_selected_year,
+            width=6
+        )
         cmb_year.grid(row=0, column=1, padx=5, sticky="w")
 
         lbl_month = ttk.Label(frm_ym, text="Month:")
@@ -1065,9 +1125,9 @@ class DiscogsDataProcessorUI(ttk.Frame):
         def apply_coverart():
             # Get the image path from the UI (assume self.wm_image_path is a StringVar)
             img_path = self.wm_image_path.get().strip()
-            # If no valid image is selected, use the default 'kaggle_art.png' from the assets folder.
+            # If no valid image is selected, use the default 'cover_art.png' from the assets folder.
             if not img_path or not os.path.exists(img_path):
-                default_img = BASE_DIR / 'assets' / 'kaggle_art.png'
+                default_img = BASE_DIR / 'assets' / 'cover_art.png'
                 if default_img.exists():
                     img_path = str(default_img)
                 else:
@@ -1321,6 +1381,51 @@ class DiscogsDataProcessorUI(ttk.Frame):
     def open_url(self, url):
         """Open a given URL in the default web browser."""
         webbrowser.open_new_tab(url)
+
+    # _scrape_data_s3 fonksiyonundaki ilgili kısım:
+    def _scrape_data_s3(self):
+        try:
+            base_url = "https://discogs-data-dumps.s3.us-west-2.amazonaws.com/"
+            prefix = "data/"
+            self.log_to_console("Listing directories from S3...", "INFO")
+            dirs = list_directories_from_s3(base_url, prefix)
+            if not dirs:
+                self.log_to_console("No directories found.", "WARNING")
+                return
+
+            # Kullanıcının seçtiği yılı al
+            selected_year = self.scrape_year_var.get()  # Örneğin "2025"
+            # Seçilen yıla uyan dizinleri filtrele (dizin isimlerinde yıl bilgisi varsa)
+            filtered_dirs = [d for d in dirs if selected_year in d]
+            if filtered_dirs:
+                filtered_dirs.sort()
+                target_dir = filtered_dirs[-1]
+            else:
+                dirs.sort()
+                target_dir = dirs[-1]
+
+            self.log_to_console(f"Selected directory: {target_dir}", "INFO")
+
+            data_df = list_files_in_directory(base_url, target_dir)
+            if not data_df.empty:
+                data_df["last_modified"] = pd.to_datetime(data_df["last_modified"])
+                data_df["month"] = data_df["last_modified"].dt.to_period("M").astype(str)
+                data_df = data_df[data_df["content"] != "checksum"]
+                content_order = {"artists": 1, "labels": 2, "masters": 3, "releases": 4}
+                data_df["content_order"] = data_df["content"].map(content_order)
+                data_df = data_df.sort_values(by=["month", "content_order"], ascending=[False, True])
+                data_df.drop(columns=["content_order"], inplace=True)
+                data_df = self.mark_downloaded_files(data_df)
+                self.data_df = data_df
+                self.populate_table(data_df)
+                self.save_to_file()
+                self.log_to_console("Scraping completed. Data saved automatically.", "INFO")
+            else:
+                self.log_to_console("No data found in the selected directory.", "WARNING")
+        except requests.exceptions.RequestException as e:
+            self.log_to_console(f"Network error: {e}", "ERROR")
+        except Exception as e:
+            self.log_to_console(f"Error: {e}", "ERROR")
 
     def populate_table(self, data_df):
         """Populates the table with updated data."""
@@ -1601,6 +1706,22 @@ class DiscogsDataProcessorUI(ttk.Frame):
         self.log_to_console("Download method: Multi-threaded (8 threads)", "INFO")
 
         Thread(target=self.download_file, args=(url, filename, folder_name), daemon=True).start()
+
+    def scrape_years_from_html(url):
+        """
+        Belirtilen URL'deki HTML içeriğinden, <a> etiketleri içinde yer alan 4 basamaklı yıl değerlerini kazır.
+        Örneğin, <a href="...">2021/</a> şeklinde bulunan yıl değerlerini çıkarır.
+        """
+        try:
+            response = requests.get(url)
+            response.raise_for_status()
+            html = response.text
+            # <a ...>2021/</a> gibi desenleri yakalayalım; yakalanan grup, 4 basamaklı yıl.
+            years = re.findall(r'<a[^>]*>(\d{4})/</a>', html)
+            return sorted(set(years))
+        except Exception as e:
+            print(f"Error scraping years: {e}")
+            return []
 
     def parallel_download(self, url, filename, folder_name, total_size):
         downloads_dir = Path(self.download_dir_var.get()) / "Datasets"
