@@ -328,9 +328,9 @@ def chunk_xml_by_type(xml_file: Path,
                     f.write(rec_str + "\n")
             f.write(f"</{content_type}>\n")
         if logger:
-            logger(f"{chunk_file.name} - {len(records_list)} records successfully written", "INFO")
+            logger(f"{chunk_file.name} - {len(records_list)} records written", "INFO")
         else:
-            print(f"{chunk_file.name} - {len(records_list)} records successfully written")
+            print(f"{chunk_file.name} - {len(records_list)} records written")
 
     records = []
     record_count = 0
@@ -489,7 +489,7 @@ def convert_chunked_files_to_csv(
         if progress_cb:
             progress_cb(i, total_chunks)
         if logger:
-            logger(f"Processing chunk {i} of {total_chunks}...", "INFO")
+            logger(f"Processing chunk {i} of {total_chunks}", "INFO")
         if chunk_file.stat().st_size == 0:
             if logger:
                 logger(f"Skipping empty chunk file: {chunk_file}", "ERROR")
