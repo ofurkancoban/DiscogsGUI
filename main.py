@@ -19,6 +19,7 @@ import time
 from datetime import datetime, timedelta
 import json
 import os
+import re
 import math
 from pathlib import Path
 from tkinter import messagebox
@@ -447,6 +448,28 @@ def human_readable_size(num_bytes):
         return f"{num_bytes // (1024 ** 3)} GB"
 
 
+def extract_date_from_key(key):
+    """
+    Verilen key içerisindeki 'discogs_YYYYMMDD_' desenini yakalar.
+    Örneğin: "data/2017/discogs_20170101_artists.xml.gz"
+    """
+    m = re.search(r'discogs_(\d{8})_', key)
+    if m:
+        date_str = m.group(1)  # Örneğin "20170101"
+        try:
+            return datetime.strptime(date_str, "%Y%m%d")
+        except Exception as e:
+            print(f"Error parsing date from key '{key}': {e}")
+    return None
+
+def get_month_from_key(key):
+    """
+    key içerisindeki tarihi alır ve "YYYY-MM" formatında döner.
+    Eğer tarih çıkarılamazsa boş string döner.
+    """
+    dt = extract_date_from_key(key)
+    return dt.strftime("%Y-%m") if dt else ""
+
 def list_directories_from_s3(base_url="https://discogs-data-dumps.s3.us-west-2.amazonaws.com/", prefix="data/"):
     """Retrieve a list of 'directories' (common prefixes) from the S3 XML listing."""
     import xml.etree.ElementTree as ET
@@ -737,7 +760,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         # UI başlatılırken __init__ metodunda, örneğin sol panelin altına ekleyebilirsiniz:
         self.scrape_year_var = StringVar(value=str(datetime.now().year))
         years = [str(year) for year in range(2008, datetime.now().year + 1)]
-        year_frame = ttk.Frame(self, padding=10)
+        year_frame = ttk.Frame(self, padding=7)
         year_frame.pack(side=TOP, fill=X)
         ttk.Label(year_frame, text="Year:").pack(side=LEFT, padx=(0, 5))
         year_combobox = ttk.Combobox(year_frame, values=years, textvariable=self.scrape_year_var, width=6)
@@ -924,7 +947,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
             data_df = list_files_in_directory(base_url, directory_prefix)
             if not data_df.empty:
                 data_df["last_modified"] = pd.to_datetime(data_df["last_modified"])
-                data_df["month"] = data_df["last_modified"].dt.to_period("M").astype(str)
+                data_df["month"] = data_df["key"].apply(get_month_from_key)
                 data_df = data_df[data_df["content"] != "checksum"]
                 content_order = {"artists": 1, "labels": 2, "masters": 3, "releases": 4}
                 data_df["content_order"] = data_df["content"].map(content_order)
@@ -1409,7 +1432,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
             data_df = list_files_in_directory(base_url, target_dir)
             if not data_df.empty:
                 data_df["last_modified"] = pd.to_datetime(data_df["last_modified"])
-                data_df["month"] = data_df["last_modified"].dt.to_period("M").astype(str)
+                data_df["month"] = data_df["key"].apply(get_month_from_key)
                 data_df = data_df[data_df["content"] != "checksum"]
                 content_order = {"artists": 1, "labels": 2, "masters": 3, "releases": 4}
                 data_df["content_order"] = data_df["content"].map(content_order)
@@ -1695,16 +1718,12 @@ class DiscogsDataProcessorUI(ttk.Frame):
             data_df.at[idx, "Processed"] = processed_status
         return data_df
 
-    def start_download(self, url, filename, last_modified):
-        """Initiates the download process with logging."""
+    def start_download(self, url, filename, folder_name):
         self.stop_flag = False
-        folder_name = last_modified.strftime("%Y-%m")
-
         self.log_to_console(f"Starting download of {filename}", "INFO")
         self.log_to_console(f"Destination folder: {folder_name}", "INFO")
         self.log_to_console(f"Source URL: {url}", "INFO")
         self.log_to_console("Download method: Multi-threaded (8 threads)", "INFO")
-
         Thread(target=self.download_file, args=(url, filename, folder_name), daemon=True).start()
 
     def scrape_years_from_html(url):
@@ -2004,10 +2023,9 @@ class DiscogsDataProcessorUI(ttk.Frame):
             ]
             if not row_data.empty:
                 url = row_data["URL"].values[0]
-                last_modified = row_data["last_modified"].values[0]
-                last_modified = pd.to_datetime(last_modified)
+                folder_name = row_data["month"].values[0]  # key bazlı türetilen month
                 filename = os.path.basename(url)
-                self.start_download(url, filename, last_modified)
+                self.start_download(url, filename, folder_name)
 
     def extract_gz_file_with_progress(self, file_path):
         import time
