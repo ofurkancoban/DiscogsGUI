@@ -24,104 +24,127 @@ import math
 from pathlib import Path
 from tkinter import messagebox
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from lxml import etree as ET  # Import lxml.etree instead of xml.etree
+from pathlib import Path
+import io
+import re
+import json
+import pandas as pd
+from lxml import etree as LET
 ###############################################################################
 #                              XML → DataFrame logic
 ###############################################################################
 
+import json
+import pandas as pd
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+import pandas as pd
+import json
+import xml.etree.ElementTree as ElementTree
+
+
 def xml_to_df(xml_path: Path, record_tag: str) -> pd.DataFrame:
     """
-    Convert an XML file to a pandas DataFrame, handling two levels of nested tags.
-    Automatically detects list-type columns based on multiple occurrences of tags.
-    Nested tags are stored as lists and serialized as JSON strings for CSV compatibility.
+    Bir XML dosyasındaki <record_tag> kayıtlarını DataFrame'e dönüştürür.
+    - Çok seviyeli tag path'lerini "_" ile birleştirir.
+    - Tekrarlayan tag/attribute değerlerini liste olarak saklar.
+    - lxml.iterparse(recover=True) kullanılarak hatalı kısımlar atlanmaya çalışılır.
     """
     records = []
     current_record = {}
-    current_path = []
     nested_data = {}
     tag_counts = {}
+    current_path = []
 
-    for event, elem in ET.iterparse(str(xml_path), events=("start", "end")):
-        if event == "start":
-            current_path.append(elem.tag)
-            if elem.tag == record_tag:
-                current_record = {}
-                nested_data = {}
-                tag_counts = {}
-        elif event == "end":
-            if elem.tag == record_tag:
-                # Merge nested_data into current_record
-                for key, value in nested_data.items():
-                    if key in current_record:
-                        if isinstance(current_record[key], list):
-                            current_record[key].append(value)
-                        else:
-                            current_record[key] = [current_record[key], value]
-                    else:
-                        current_record[key] = value
-                records.append(current_record)
-                current_record = {}
-                nested_data = {}
-                tag_counts = {}
-            else:
-                if elem.text and not elem.text.isspace():
-                    if len(current_path) >= 3:
-                        # Two levels deep
-                        parent_tag = current_path[-3]
-                        child_tag = current_path[-2]
-                        full_tag = f"{parent_tag}_{child_tag}_{elem.tag}"
-                    elif len(current_path) == 2:
-                        # One level deep
-                        full_tag = f"{current_path[-2]}_{elem.tag}"
-                    else:
-                        # Root level
-                        full_tag = elem.tag
+    def push_tag(tag):
+        if not current_path or current_path[-1] != tag:
+            current_path.append(tag)
 
-                    # Initialize tag count
-                    tag_counts[full_tag] = tag_counts.get(full_tag, 0) + 1
-
-                    value = elem.text.strip()
-                    if tag_counts[full_tag] > 1:
-                        # If tag occurs multiple times, store as list
-                        if full_tag in nested_data:
-                            nested_data[full_tag].append(value)
-                        else:
-                            nested_data[full_tag] = [nested_data.get(full_tag, []), value]
-                    else:
-                        nested_data[full_tag] = value
-                # Handle attributes
-                for attr, value in elem.attrib.items():
-                    if len(current_path) >= 3:
-                        parent_tag = current_path[-3]
-                        child_tag = current_path[-2]
-                        tag_name = f"{parent_tag}_{child_tag}_{elem.tag}_{attr}"
-                    elif len(current_path) == 2:
-                        tag_name = f"{current_path[-2]}_{elem.tag}_{attr}"
-                    else:
-                        tag_name = f"{elem.tag}_{attr}"
-
-                    # Initialize tag count
-                    tag_counts[tag_name] = tag_counts.get(tag_name, 0) + 1
-
-                    if tag_counts[tag_name] > 1:
-                        # If attribute occurs multiple times, store as list
-                        if tag_name in nested_data:
-                            nested_data[tag_name].append(value)
-                        else:
-                            nested_data[tag_name] = [nested_data.get(tag_name, []), value]
-                    else:
-                        nested_data[tag_name] = value
+    def pop_tag():
+        if current_path:
             current_path.pop()
+
+    try:
+        raw_text = xml_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return pd.DataFrame()
+
+    raw_text = remove_invalid_xml_chars(raw_text)
+    b_stream = io.BytesIO(raw_text.encode("utf-8"))
+    # "parser" argümanı kaldırıldı.
+    context = LET.iterparse(b_stream, events=("start", "end"))
+
+    for event, elem in context:
+        if event == "start":
+            push_tag(elem.tag)
+            for attr_name, attr_value in elem.attrib.items():
+                attr_value = " ".join(attr_value.split())
+                full_attr_tag = "_".join(current_path) + "_" + attr_name
+                tag_counts[full_attr_tag] = tag_counts.get(full_attr_tag, 0) + 1
+                if tag_counts[full_attr_tag] == 1:
+                    nested_data[full_attr_tag] = attr_value
+                else:
+                    if not isinstance(nested_data[full_attr_tag], list):
+                        nested_data[full_attr_tag] = [nested_data[full_attr_tag]]
+                    nested_data[full_attr_tag].append(attr_value)
+        elif event == "end":
+            if elem.text and not elem.text.isspace():
+                text_value = " ".join(elem.text.split())
+                full_tag = "_".join(current_path)
+                tag_counts[full_tag] = tag_counts.get(full_tag, 0) + 1
+                if tag_counts[full_tag] == 1:
+                    nested_data[full_tag] = text_value
+                else:
+                    if not isinstance(nested_data[full_tag], list):
+                        nested_data[full_tag] = [nested_data[full_tag]]
+                    nested_data[full_tag].append(text_value)
+            if elem.tag == record_tag:
+                if nested_data:
+                    for k, v in nested_data.items():
+                        if k not in current_record:
+                            current_record[k] = v
+                        else:
+                            if not isinstance(current_record[k], list):
+                                current_record[k] = [current_record[k]]
+                            current_record[k].append(v)
+                    if any(val for val in current_record.values() if val):
+                        records.append(dict(current_record))
+                current_record.clear()
+                nested_data.clear()
+                tag_counts.clear()
+            pop_tag()
             elem.clear()
 
-    # Create DataFrame from records
     df = pd.DataFrame(records)
-
-    # Dynamically serialize list-type columns as JSON strings
     for col in df.columns:
         if df[col].apply(lambda x: isinstance(x, list)).any():
             df[col] = df[col].apply(lambda x: json.dumps(x) if isinstance(x, list) else x)
-
     return df
+
+
+def build_path_name(path_list, current_tag):
+    """
+    Çok seviyeli path'i birleştirmek için yardımcı fonksiyon.
+    Örn: path_list=['label','sublabels','label'] ve current_tag='id' => 'label_sublabels_label_id'
+    Daha esnek olsun derseniz, path_list[:-1] + current_tag gibi kullanabilirsiniz.
+    """
+    if len(path_list) > 1:
+        # path_list'in başından sonuncusuna kadar + current_tag
+        # NOT: sonuncu path_list[-1] genelde current_tag=elem.tag;
+        # ama attributes'ta 'start' event'te current_tag = attr_name olduğundan
+        # ufak bir hile => path_list + [current_tag].
+        full_path = path_list[:]  # kopya
+        full_path[-1] = full_path[-1]  # sonuncusu as is
+        # current_tag parametresini ekliyoruz
+        # ama attribute ise en son parça =>
+        # neticede "label_sublabels_label_id" gibi:
+        return "_".join(full_path + [current_tag])
+    else:
+        # tek seviyeli, doğrudan current_tag
+        # Örn: path_list=['label'], current_tag='id' => 'label_id'
+        return "_".join(path_list + [current_tag])
 
 
 ###############################################################################
@@ -158,51 +181,187 @@ def convert_extracted_file_to_csv(extracted_file_path: Path, output_csv_path: Pa
 ###############################################################################
 #                   CHUNKING LOGIC (Using iterparse to avoid mismatch)
 ###############################################################################
-def chunk_xml_by_type(xml_file: Path, content_type: str, records_per_file: int = 10000, logger=None):
+def remove_invalid_xml_chars(text: str) -> str:
     """
-    1. Pass: Split large XML into smaller chunks by record type.
+    XML 1.0 için geçerli olmayan kontrol karakterlerini kaldırır.
+    İzin verilen: TAB (\x09), LF (\x0A), CR (\x0D) gibi karakterler.
+    Bu fonksiyon [\x00-\x08\x0B-\x0C\x0E-\x1F] aralığındaki karakterleri kaldırır.
     """
+    return re.sub(r'[\x00-\x08\x0B-\x0C\x0E-\x1F]', '', text)
+
+def detect_xml_version(xml_file: Path) -> str:
+    """
+    Discogs XML'in eski ('old') veya yeni ('new') formatta olduğunu belirler.
+    - Yeni format: root genelde <labels>, <artists>, <masters>, <releases> vb.
+    - Eski format: dosyada tek bir container yoktur; <label> veya <artist> blokları sıralı gelir.
+    lxml'in recover=True modunda parse etmeye çalışır.
+    """
+    if not xml_file.exists() or xml_file.stat().st_size == 0:
+        return 'old'
+    try:
+        parser = LET.XMLParser(recover=True, encoding="utf-8")
+        tree = LET.parse(str(xml_file), parser=parser)
+        root = tree.getroot()
+        root_tag_lower = root.tag.lower()
+        possible_new_roots = {'labels','artists','masters','releases'}
+        if root_tag_lower in possible_new_roots:
+            return 'new'
+        else:
+            return 'old'
+    except Exception:
+        return 'old'
+
+
+import xml.etree.ElementTree as ET
+import io
+from pathlib import Path
+import xml.etree.ElementTree as ElementTree  # veya lxml.etree de kullanabilirsiniz
+
+from pathlib import Path
+import xml.etree.ElementTree as ElementTree
+
+def detect_xml_version(xml_file: Path) -> str:
+    """
+    Discogs XML'in eski ('old') ya da yeni ('new') formatta olduğunu tespit eder.
+    - Yeni format: root çoğunlukla <artists>, <labels>, <releases>, <masters> vs.
+    - Eski format: genelde tek bir container yoktur, birden fazla <artist> veya <label> blokları sıralı gelir.
+    Dönüş: 'old' veya 'new'
+    """
+    if not xml_file.exists():
+        # Dosya yoksa veya 0 baytsa 'old' diyelim (ama aslında hata durumu)
+        return 'old'
+    if xml_file.stat().st_size == 0:
+        # Boş dosya, parse hatası verecektir => 'old'
+        return 'old'
+
+    try:
+        parser = ElementTree.XMLParser()
+        tree = ElementTree.parse(str(xml_file), parser=parser)
+        root = tree.getroot()
+
+        root_tag_lower = root.tag.lower()
+        # Discogs'ta 'new' format için sık rastlanan root etiketleri:
+        possible_new_roots = {'artists','labels','releases','masters'}
+
+        if root_tag_lower in possible_new_roots:
+            return 'new'
+        else:
+            # Örneğin root "discogs" ise, altındaki <artists>... olabiliyor. Daha ileri kontrol gerekebilir.
+            # Basitçe, eğer tam eşleşme yoksa 'old' diyoruz.
+            return 'old'
+
+    except ElementTree.ParseError:
+        return 'old'
+    except Exception:
+        return 'old'
+import io
+import xml.etree.ElementTree as ET
+
+import io
+import xml.etree.ElementTree as ET
+
+
+# "lxml" kullanarak parser
+from lxml import etree as LET
+
+
+def chunk_xml_by_type(xml_file: Path,
+                      content_type: str,
+                      records_per_file: int = 10000,
+                      logger=None) -> Path:
+    """
+    Discogs XML dosyasını <record_tag> bazında parçalara (chunk) ayırır.
+    - content_type: 'labels', 'artists', 'releases', 'masters' vb.
+    - record_tag = content_type[:-1] (örn. 'labels' -> 'label')
+    - Eski formatta, dosyayı <root>...</root> ile sarar; yeni formatta sarmalama yapmaz.
+    - lxml.iterparse(recover=True) ile hatalı tokenları atlamaya çalışır.
+    Ek olarak, dosya okuma sırasında encoding hatalarını 'replace' yöntemiyle yönetip,
+    geçersiz XML karakterlerini temizler.
+    """
+    if not xml_file.exists():
+        msg = f"chunk_xml_by_type: File not found => {xml_file}"
+        if logger:
+            logger(msg, "ERROR")
+        else:
+            print("[ERROR]", msg)
+        return None
+
+    file_size = xml_file.stat().st_size
+    if file_size == 0:
+        msg = f"chunk_xml_by_type: File is empty => {xml_file}"
+        if logger:
+            logger(msg, "ERROR")
+        else:
+            print("[ERROR]", msg)
+        return None
+
+    record_tag = content_type[:-1]  # örn: 'labels' -> 'label'
+    version = detect_xml_version(xml_file)  # 'old' veya 'new'
+
     chunk_folder = xml_file.parent / f"chunked_{content_type}"
     chunk_folder.mkdir(exist_ok=True)
 
-    record_tag = content_type[:-1]  # e.g., "releases" -> "release"
-    chunk_count = 0
-    record_count = 0
-    current_chunk = None
+    raw_text = xml_file.read_text(encoding="utf-8", errors="replace")
+    raw_text = remove_invalid_xml_chars(raw_text)
 
-    for event, elem in ET.iterparse(str(xml_file), events=("start", "end")):
-        if event == "start":
-            if elem.tag == record_tag:
-                if record_count % records_per_file == 0:
-                    if current_chunk is not None:
-                        current_chunk.write(f"</{content_type}>")
-                        current_chunk.close()
+    if version == 'old':
+        wrapped_text = f"<root>\n{raw_text}\n</root>"
+    else:
+        wrapped_text = raw_text
 
-                    # Use zfill to ensure proper sorting (e.g., chunk_001.xml)
-                    chunk_count += 1
-                    chunk_file = chunk_folder / f"chunk_{str(chunk_count).zfill(6)}.xml"
-                    current_chunk = open(chunk_file, "w", encoding="utf-8")
-                    current_chunk.write(f'<?xml version="1.0" encoding="utf-8"?>\n<{content_type}>')
-
-                    if logger:
-                        logger(f"Created new chunk: {chunk_file.name}", "INFO")
-                    else:
-                        print(f"Created new chunk: {chunk_file.name}")
-
-                record_count += 1
-                current_chunk.write(ET.tostring(elem, encoding="unicode"))
-
-        elif event == "end" and elem.tag == record_tag:
-            elem.clear()
-
-    if current_chunk is not None:
-        current_chunk.write(f"</{content_type}>")
-        current_chunk.close()
+    wrapped_stream = io.BytesIO(wrapped_text.encode("utf-8"))
+    # "parser" argümanı kaldırıldı; lxml.iterparse artık bu şekilde çağrılacak.
+    context = LET.iterparse(wrapped_stream, events=("start", "end"))
 
     if logger:
-        logger(f"Chunking completed. Created {chunk_count} chunks.", "INFO")
+        logger(f"[chunk_xml_by_type] version={version}, record_tag={record_tag}, size={file_size}", "DEBUG")
+        logger(f"[chunk_xml_by_type] chunk_folder => {chunk_folder}", "DEBUG")
+
+    def write_chunk(records_list, idx):
+        chunk_file = chunk_folder / f"chunk_{idx:06d}.xml"
+        with open(chunk_file, "w", encoding="utf-8") as f:
+            f.write('<?xml version="1.0" encoding="utf-8"?>\n')
+            f.write(f"<{content_type}>\n")
+            for rec in records_list:
+                rec_str = rec.strip()
+                if rec_str:
+                    f.write(rec_str + "\n")
+            f.write(f"</{content_type}>\n")
+        if logger:
+            logger(f"{chunk_file.name} - {len(records_list)} records successfully written", "INFO")
+        else:
+            print(f"{chunk_file.name} - {len(records_list)} records successfully written")
+
+    records = []
+    record_count = 0
+    chunk_count = 0
+    total_records = 0
+
+    for event, elem in context:
+        if event == "end" and elem.tag == record_tag:
+            rec_xml = LET.tostring(elem, encoding="unicode")
+            records.append(rec_xml)
+            record_count += 1
+            total_records += 1
+            elem.clear()
+            if record_count >= records_per_file:
+                chunk_count += 1
+                write_chunk(records, chunk_count)
+                records.clear()
+                record_count = 0
+
+    if records:
+        chunk_count += 1
+        write_chunk(records, chunk_count)
+
+    if logger:
+        logger(f"[chunk_xml_by_type] Found {total_records} <{record_tag}> total", "INFO")
+        logger(f"Created {chunk_count} chunk(s) in {chunk_folder}", "INFO")
     else:
-        print(f"Chunking completed. Created {chunk_count} chunks.")
+        print(f"[chunk_xml_by_type] Found {total_records} <{record_tag}> total")
+        print(f"Created {chunk_count} chunk(s) in {chunk_folder}")
+
+    return chunk_folder
 
 
 ###############################################################################
@@ -260,95 +419,34 @@ def update_columns_from_chunk(chunk_file_path: Path, all_columns: set, record_ta
         print(f"Updated columns from {chunk_file_path.name}. Total columns now: {len(all_columns)}")
 
 
-def write_chunk_to_csv(chunk_file_path: Path, csv_writer: csv.DictWriter, all_columns: list, record_tag: str,
-                       logger=None):
-    """
-    2. Pass: Parse the chunk file line by line.
-             For each <record_tag>...</record_tag> record, write a single row to the CSV.
-             Nested tags are serialized as JSON strings.
-    """
+def write_chunk_to_csv(chunk_file_path: Path, csv_writer: csv.DictWriter, all_columns: list, record_tag: str, logger=None):
     current_path = []
     record_data = {}
     nested_data = {}
 
+    count_chunk_records = 0  # <--- bu chunk'taki kayıt sayacı
+
     for event, elem in ET.iterparse(str(chunk_file_path), events=("start", "end")):
         if event == "start":
             current_path.append(elem.tag)
-            # Save attributes
-            for attr, value in elem.attrib.items():
-                if len(current_path) >= 3:
-                    # Two levels deep
-                    parent_tag = current_path[-3]
-                    current_tag = current_path[-2]
-                    tag_name = f"{parent_tag}_{current_tag}_{elem.tag}_{attr}"
-                elif len(current_path) == 2:
-                    # One level deep
-                    tag_name = f"{current_path[-2]}_{elem.tag}_{attr}"
-                else:
-                    # Root or unexpected depth
-                    tag_name = f"{elem.tag}_{attr}"
-                # Handle multiple attributes by storing in lists
-                if tag_name in nested_data:
-                    if isinstance(nested_data[tag_name], list):
-                        nested_data[tag_name].append(value)
-                    else:
-                        nested_data[tag_name] = [nested_data[tag_name], value]
-                else:
-                    nested_data[tag_name] = value
-
+            # ...
         elif event == "end":
-            if elem.text and not elem.text.isspace():
-                if len(current_path) >= 3:
-                    # Two levels deep
-                    parent_tag = current_path[-3]
-                    current_tag = current_path[-2]
-                    tag_name = f"{parent_tag}_{current_tag}_{elem.tag}"
-                elif len(current_path) == 2:
-                    # One level deep
-                    tag_name = f"{current_path[-2]}_{elem.tag}"
-                else:
-                    # Root or unexpected depth
-                    tag_name = elem.tag
-                # Handle multiple tags by storing in lists
-                if tag_name in nested_data:
-                    if isinstance(nested_data[tag_name], list):
-                        nested_data[tag_name].append(elem.text.strip())
-                    else:
-                        nested_data[tag_name] = [nested_data[tag_name], elem.text.strip()]
-                else:
-                    nested_data[tag_name] = elem.text.strip()
-
+            # ...
             if elem.tag == record_tag:
-                # Record completed, write to CSV
-                # Merge nested_data into current_record
-                for key, value in nested_data.items():
-                    if key in record_data:
-                        if isinstance(record_data[key], list):
-                            record_data[key].append(value)
-                        else:
-                            record_data[key] = [record_data[key], value]
-                    else:
-                        record_data[key] = value
-
-                # Serialize nested structures as JSON strings
-                row_to_write = {}
-                for col in all_columns:
-                    value = record_data.get(col, None)
-                    if isinstance(value, (dict, list)):
-                        row_to_write[col] = json.dumps(value)
-                    else:
-                        row_to_write[col] = value
+                # CSV'ye yazma
+                # ...
                 csv_writer.writerow(row_to_write)
                 record_data.clear()
                 nested_data.clear()
+                count_chunk_records += 1  # her kayıtta art
 
             current_path.pop()
             elem.clear()
 
     if logger:
-        logger(f"Written data from {chunk_file_path.name} to CSV.", "INFO")
+        logger(f"{chunk_file_path.name} - Successfully written {count_chunk_records} records to CSV.", "DEBUG")
     else:
-        print(f"Written data from {chunk_file_path.name} to CSV.")
+        print(f"{chunk_file_path.name} - Successfully written {count_chunk_records} records to CSV.")
 
 
 def convert_progress_callback(self, current_step, total_steps):
@@ -363,62 +461,60 @@ def convert_progress_callback(self, current_step, total_steps):
     self.update_idletasks()
 
 
+import pandas as pd
+
+
 def convert_chunked_files_to_csv(
     chunk_folder: Path,
     output_csv: Path,
-    content_type: str,
+    record_tag: str,
     logger=None,
-    progress_cb=None  # Callback for progress updates
+    progress_cb=None
 ):
     """
-    1) Discover columns across all chunk files (pass 1).
-    2) Write all chunk files to CSV (pass 2).
-    If progress_cb(current_step, total_steps) is provided,
-    it will be called after each chunk is processed.
+    chunk_folder içindeki 'chunk_*.xml' dosyalarını xml_to_df ile okuyup,
+    tümünü tek bir CSV dosyasında birleştirir.
     """
-    import csv
-    record_tag = content_type[:-1]  # "releases" -> "release"
     chunk_files = sorted(chunk_folder.glob("chunk_*.xml"))
     if not chunk_files:
         if logger:
-            logger(f"[WARNING] No chunk_*.xml files found in {chunk_folder}", "WARNING")
+            logger(f"No chunk_*.xml files found in {chunk_folder}", "WARNING")
         else:
-            print(f"[WARNING] No chunk_*.xml files found in {chunk_folder}")
+            print(f"[WARN] No chunk files in {chunk_folder}")
         return
 
-    # 1) PASS: Discover columns
+    all_dfs = []
     total_chunks = len(chunk_files)
-    current_step = 0
-    all_columns = set()
-
-    # Total steps: PASS 1 + PASS 2 = 2 * total_chunks
-    total_steps = 2 * total_chunks
-
-    for cf in chunk_files:
-        update_columns_from_chunk(cf, all_columns, record_tag=record_tag, logger=logger)
-        current_step += 1
-
-        # Update progress bar after each chunk
+    for i, chunk_file in enumerate(chunk_files, 1):
         if progress_cb:
-            progress_cb(current_step, total_steps)
-
-    all_columns = sorted(all_columns)  # Keep columns ordered
-
-    # 2) PASS: Write to CSV
-    with open(output_csv, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=all_columns)
-        writer.writeheader()
-
-        for cf in chunk_files:
-            write_chunk_to_csv(cf, writer, all_columns, record_tag=record_tag, logger=logger)
-            current_step += 1
-            if progress_cb:
-                progress_cb(current_step, total_steps)
-
-    if logger:
-        logger(f"Done! Created CSV: {output_csv}", "INFO")
+            progress_cb(i, total_chunks)
+        if logger:
+            logger(f"Processing chunk {i} of {total_chunks}...", "INFO")
+        if chunk_file.stat().st_size == 0:
+            if logger:
+                logger(f"Skipping empty chunk file: {chunk_file}", "ERROR")
+            continue
+        try:
+            df_chunk = xml_to_df(chunk_file, record_tag=record_tag)
+            if not df_chunk.empty:
+                all_dfs.append(df_chunk)
+        except Exception as e:
+            if logger:
+                logger(f"Error converting {chunk_file}: {e}", "ERROR")
+            else:
+                print(f"[ERROR] {chunk_file} - {e}")
+    if all_dfs:
+        df_final = pd.concat(all_dfs, ignore_index=True)
+        df_final.to_csv(output_csv, index=False)
+        if logger:
+            logger(f"Merged {len(all_dfs)} chunks into {output_csv}", "INFO")
+        else:
+            print(f"[INFO] Merged {len(all_dfs)} chunks into {output_csv}")
     else:
-        print(f"[INFO] Done! Created CSV: {output_csv}")
+        if logger:
+            logger("No valid data found in chunk files. CSV not created.", "WARNING")
+        else:
+            print("[WARNING] No valid data found; skipping CSV creation.")
 
 
 ###############################################################################
@@ -933,7 +1029,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
     def on_year_change(self, event):
         selected_year = self.scrape_year_var.get()
         self.log_to_console(f"Yeni yıl seçildi: {selected_year}", "INFO")
-        # Örneğin, S3’te "data/2021/" dizinini kullanarak dosyaları listeleyelim:
+        # Örneğin, S3'te "data/2021/" dizinini kullanarak dosyaları listeleyelim:
         target_prefix = f"data/{selected_year}/"
         self.update_files_for_year(target_prefix)
     def update_files_for_year(self, directory_prefix):
@@ -2363,10 +2459,11 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
                         try:
                             self.log_to_console(f"Converting chunks to CSV: {chunk_folder}", "INFO")
+                            record_tag = content_val[:-1]  # e.g. 'labels' → 'label', 'artists' → 'artist'
                             convert_chunked_files_to_csv(
-                                chunk_folder,
-                                combined_csv,
-                                content_type=content_val,
+                                chunk_folder=chunk_folder,
+                                output_csv=combined_csv,
+                                record_tag=record_tag,
                                 logger=self.log_to_console,
                                 progress_cb=local_progress_cb
                             )
