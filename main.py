@@ -31,6 +31,12 @@ import re
 import json
 import pandas as pd
 from lxml import etree as LET
+import mmap
+import io
+import re
+import pandas as pd
+from lxml import etree as LET
+from pathlib import Path
 ###############################################################################
 #                              XML → DataFrame logic
 ###############################################################################
@@ -181,35 +187,35 @@ def convert_extracted_file_to_csv(extracted_file_path: Path, output_csv_path: Pa
 ###############################################################################
 #                   CHUNKING LOGIC (Using iterparse to avoid mismatch)
 ###############################################################################
-def remove_invalid_xml_chars(text: str) -> str:
-    """
-    XML 1.0 için geçerli olmayan kontrol karakterlerini kaldırır.
-    İzin verilen: TAB (\x09), LF (\x0A), CR (\x0D) gibi karakterler.
-    Bu fonksiyon [\x00-\x08\x0B-\x0C\x0E-\x1F] aralığındaki karakterleri kaldırır.
-    """
-    return re.sub(r'[\x00-\x08\x0B-\x0C\x0E-\x1F]', '', text)
+# def remove_invalid_xml_chars(text: str) -> str:
+#     """
+#     XML 1.0 için geçerli olmayan kontrol karakterlerini kaldırır.
+#     İzin verilen: TAB (\x09), LF (\x0A), CR (\x0D) gibi karakterler.
+#     Bu fonksiyon [\x00-\x08\x0B-\x0C\x0E-\x1F] aralığındaki karakterleri kaldırır.
+#     """
+#     return re.sub(r'[\x00-\x08\x0B-\x0C\x0E-\x1F]', '', text)
 
-def detect_xml_version(xml_file: Path) -> str:
-    """
-    Discogs XML'in eski ('old') veya yeni ('new') formatta olduğunu belirler.
-    - Yeni format: root genelde <labels>, <artists>, <masters>, <releases> vb.
-    - Eski format: dosyada tek bir container yoktur; <label> veya <artist> blokları sıralı gelir.
-    lxml'in recover=True modunda parse etmeye çalışır.
-    """
-    if not xml_file.exists() or xml_file.stat().st_size == 0:
-        return 'old'
-    try:
-        parser = LET.XMLParser(recover=True, encoding="utf-8")
-        tree = LET.parse(str(xml_file), parser=parser)
-        root = tree.getroot()
-        root_tag_lower = root.tag.lower()
-        possible_new_roots = {'labels','artists','masters','releases'}
-        if root_tag_lower in possible_new_roots:
-            return 'new'
-        else:
-            return 'old'
-    except Exception:
-        return 'old'
+# def detect_xml_version(xml_file: Path) -> str:
+#     """
+#     Discogs XML'in eski ('old') veya yeni ('new') formatta olduğunu belirler.
+#     - Yeni format: root genelde <labels>, <artists>, <masters>, <releases> vb.
+#     - Eski format: dosyada tek bir container yoktur; <label> veya <artist> blokları sıralı gelir.
+#     lxml'in recover=True modunda parse etmeye çalışır.
+#     """
+#     if not xml_file.exists() or xml_file.stat().st_size == 0:
+#         return 'old'
+#     try:
+#         parser = LET.XMLParser(recover=True, encoding="utf-8")
+#         tree = LET.parse(str(xml_file), parser=parser)
+#         root = tree.getroot()
+#         root_tag_lower = root.tag.lower()
+#         possible_new_roots = {'labels','artists','masters','releases'}
+#         if root_tag_lower in possible_new_roots:
+#             return 'new'
+#         else:
+#             return 'old'
+#     except Exception:
+#         return 'old'
 
 
 import xml.etree.ElementTree as ET
@@ -264,6 +270,52 @@ import xml.etree.ElementTree as ET
 # "lxml" kullanarak parser
 from lxml import etree as LET
 
+import threading
+from pathlib import Path
+
+
+# Assuming chunk_xml_by_type (and other functions) are already defined as in our previous code.
+
+def start_chunking_in_background(xml_file: Path, content_type: str, records_per_file: int, logger=None,
+                                 progress_callback=None, completion_callback=None):
+    """
+    Starts the chunking process in a background thread to prevent UI freezing.
+    progress_callback: A callable that takes progress messages or percent updates.
+    completion_callback: A callable that will be called once chunking is complete with the chunk folder path.
+    """
+
+    def worker():
+        if logger:
+            logger("Starting chunking operation in background...", "INFO")
+        # Call chunking function
+        chunk_folder = chunk_xml_by_type(xml_file, content_type, records_per_file, logger=logger)
+        if completion_callback:
+            completion_callback(chunk_folder)
+        if logger:
+            logger("Chunking operation completed.", "INFO")
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+
+
+def on_convert_button_click():
+    xml_file = Path("/path/to/your/old_format.xml")
+    content_type = "releases"  # or "labels", "artists", etc.
+    records_per_file = 10000
+
+    def progress_update(progress):
+        # Update your progress bar or label via your UI framework (using .after if needed)
+        print(f"Progress: {progress}")
+
+    def conversion_complete(chunk_folder):
+        # Now that chunking is complete, you can call your convert_chunked_files_to_csv function.
+        # Make sure to call UI updates using .after() if updating UI elements.
+        print(f"Chunking complete. Chunks stored in: {chunk_folder}")
+        # For example:
+        convert_chunked_files_to_csv(chunk_folder, Path("/path/to/output.csv"), record_tag="release", logger=print)
+
+    start_chunking_in_background(xml_file, content_type, records_per_file, logger=print,
+                                 progress_callback=progress_update, completion_callback=conversion_complete)
 
 def chunk_xml_by_type(xml_file: Path,
                       content_type: str,
