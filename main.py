@@ -13,7 +13,6 @@ import queue
 from tkinter import filedialog
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
-from tkinter import messagebox
 from tkinter import StringVar  # Import StringVar
 import time
 from datetime import datetime, timedelta
