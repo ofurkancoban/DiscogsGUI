@@ -23,6 +23,7 @@ import math
 from pathlib import Path
 from tkinter import messagebox
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from tkinter import filedialog, StringVar, messagebox, BooleanVar
 ###############################################################################
 #                              XML → DataFrame logic
 ###############################################################################
@@ -809,6 +810,17 @@ class DiscogsDataProcessorUI(ttk.Frame):
         year_combobox = ttk.Combobox(year_frame, values=years, textvariable=self.scrape_year_var, width=6)
         year_combobox.pack(side=LEFT)
         year_combobox.bind("<<ComboboxSelected>>", self.on_year_change)
+
+        # ─── AUTO MODE TOGGLE EKLE ───────────────────────────────
+        self.auto_mode_var = BooleanVar(value=True)
+        auto_toggle = ttk.Checkbutton(
+            year_frame,
+            text="Auto Mode",
+            variable=self.auto_mode_var,
+            bootstyle="round-toggle"  # ttkbootstrap'ta yuvarlak toggle için uygun bootstyle
+        )
+        auto_toggle.pack(side=RIGHT, padx=(10, 15))
+
         # Status panel
         status_cf = CollapsingFrame(left_panel)
         status_cf.pack(fill=BOTH, expand=True, pady=1)
@@ -857,7 +869,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         stop_btn = ttk.Button(status_frm, command=self.stop_download, image='stop', text='Stop', compound=LEFT)
         stop_btn.grid(row=7, column=0, columnspan=2, sticky=EW)
 
-        lbl_ver = ttk.Label(left_panel, text="v.1.1", style='bg.TLabel')
+        lbl_ver = ttk.Label(left_panel, text="v.1.2", style='bg.TLabel')
         lbl_ver.pack(side='bottom', anchor='center', pady=2)
         lbl_name = ttk.Label(left_panel, text="ofurkancoban", style='bg.TLabel')
         lbl_name.pack(side='bottom', anchor='center', pady=2)
@@ -1823,7 +1835,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 self.log_to_console(f"Error in thread {idx}: {e}", "ERROR")
 
         start_time = datetime.now()
-        timeout = 9999  # Very large, effectively no real "timeout"
+        timeout = 99999  # Very large, effectively no real "timeout"
         self.prog_time_started_var.set(f'Started at: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
         threads = []
         for i in range(num_threads):
@@ -1900,11 +1912,13 @@ class DiscogsDataProcessorUI(ttk.Frame):
                     self.update_downloaded_size()
                     self.prog_message_var.set('Idle...')
 
-                    self.after(0, lambda: self.show_centered_popup(
-                        "Download Completed",
-                        f"{filename} successfully downloaded",
-                        "info"
-                    ))
+                    # Popup yalnızca Auto Mode kapalıysa gösterilsin.
+                    if not self.auto_mode_var.get():
+                        self.after(0, lambda: self.show_centered_popup(
+                            "Download Completed",
+                            f"{filename} successfully downloaded",
+                            "info"
+                        ))
             else:
                 self.single_thread_download(url, filename, folder_name)
 
@@ -2047,28 +2061,110 @@ class DiscogsDataProcessorUI(ttk.Frame):
             messagebox.showwarning("Warning", "No file selected!")
             return
 
-        for item in checked_items:
-            values = self.tree.item(item, "values")
-            month_val = values[1]
-            content_val = values[2]
-            size_val = values[3]
-            downloaded_val = values[4]
-            extracted_val = values[5]
-            processed_val = values[6]
+        if self.auto_mode_var.get():
+            # Auto Mode aktifse, tüm işlemleri otomatik zincirleme olarak başlat:
+            Thread(target=self.auto_mode_process, args=(checked_items,), daemon=True).start()
+        else:
+            # Normal modda, her dosya için download işlemini başlat.
+            for item in checked_items:
+                values = self.tree.item(item, "values")
+                month_val = values[1]
+                content_val = values[2]
+                size_val = values[3]
+                downloaded_val = values[4]
+                extracted_val = values[5]
+                processed_val = values[6]
 
-            row_data = self.data_df[
-                (self.data_df["month"] == month_val) &
-                (self.data_df["content"] == content_val) &
-                (self.data_df["size"] == size_val) &
-                (self.data_df["Downloaded"] == downloaded_val) &
-                (self.data_df["Extracted"] == extracted_val) &
-                (self.data_df["Processed"] == processed_val)
-            ]
-            if not row_data.empty:
-                url = row_data["URL"].values[0]
-                folder_name = row_data["month"].values[0]  # key bazlı türetilen month
-                filename = os.path.basename(url)
-                self.start_download(url, filename, folder_name)
+                row_data = self.data_df[
+                    (self.data_df["month"] == month_val) &
+                    (self.data_df["content"] == content_val) &
+                    (self.data_df["size"] == size_val) &
+                    (self.data_df["Downloaded"] == downloaded_val) &
+                    (self.data_df["Extracted"] == extracted_val) &
+                    (self.data_df["Processed"] == processed_val)
+                ]
+                if not row_data.empty:
+                    url = row_data["URL"].values[0]
+                    folder_name = row_data["month"].values[0]  # key bazlı türetilen month
+                    filename = os.path.basename(url)
+                    self.start_download(url, filename, folder_name)
+
+        # ─── AUTO MODE İŞLEMLERİNİ YÖNETEN YENİ METOD ─────────────────
+    def auto_mode_process(self, checked_items):
+            """
+            Auto Mode aktifken; seçili dosyalar için download, extract, chunking ve convert işlemlerini
+            sırasıyla gerçekleştiren zincirleme işlemi yapar. Her adımın tamamlanmasını bekler ve
+            tüm işlemler bittikten sonra bir popup ile kullanıcı bilgilendirilir.
+            """
+            # Seçili dosyalardan URL listesini elde edelim ve download işlemini başlatalım.
+            urls = []
+            for item in checked_items:
+                values = self.tree.item(item, "values")
+                month_val = values[1]
+                content_val = values[2]
+                size_val = values[3]
+                row_data = self.data_df[
+                    (self.data_df["month"] == month_val) &
+                    (self.data_df["content"] == content_val) &
+                    (self.data_df["size"] == size_val)
+                    ]
+                if not row_data.empty:
+                    url = row_data["URL"].values[0]
+                    urls.append(url)
+                    folder_name = row_data["month"].values[0]
+                    filename = os.path.basename(url)
+                    self.start_download(url, filename, folder_name)
+            self.log_to_console("Auto Mode: Download initiated. Waiting for downloads to complete...", "INFO")
+
+            # Bekleme: Tüm seçili dosyaların download tamamlanmasını bekle
+            while not self.stop_flag:
+                all_downloaded = True
+                for url in urls:
+                    row = self.data_df[self.data_df["URL"] == url]
+                    if not row.empty and row.iloc[0]["Downloaded"] != "✔":
+                        all_downloaded = False
+                        break
+                if all_downloaded:
+                    break
+                time.sleep(1)
+            if self.stop_flag:
+                return
+
+            self.log_to_console("Auto Mode: Downloads complete. Starting extraction...", "INFO")
+            # Extraction işlemini tetikle (extract_selected metodu tüm seçili dosyaları işler)
+            self.extract_selected()
+            while not self.stop_flag:
+                all_extracted = True
+                for url in urls:
+                    row = self.data_df[self.data_df["URL"] == url]
+                    if not row.empty and row.iloc[0]["Extracted"] != "✔":
+                        all_extracted = False
+                        break
+                if all_extracted:
+                    break
+                time.sleep(1)
+            if self.stop_flag:
+                return
+
+            self.log_to_console("Auto Mode: Extraction complete. Starting conversion...", "INFO")
+            # Conversion işlemini başlat (convert_selected metodu tüm seçili dosyaları işler)
+            self.convert_selected()
+            while not self.stop_flag:
+                all_converted = True
+                for url in urls:
+                    row = self.data_df[self.data_df["URL"] == url]
+                    if not row.empty and row.iloc[0]["Processed"] != "✔":
+                        all_converted = False
+                        break
+                if all_converted:
+                    break
+                time.sleep(1)
+            if self.stop_flag:
+                return
+
+            self.log_to_console("Auto Mode: All operations completed.", "INFO")
+            self.after(0,
+                       lambda: self.show_centered_popup("Auto Mode", "All operations completed successfully!", "info"))
 
     def extract_gz_file_with_progress(self, file_path: Path, callback):
         """
@@ -2150,38 +2246,72 @@ class DiscogsDataProcessorUI(ttk.Frame):
         extraction_thread.start()
         update_progress()
 
+    def get_auto_convert_items(self):
+        """
+        Auto Mode açıkken, treeview'de Downloaded sütununda "✔", Extracted sütununda "✔" olup
+        Processed sütununda henüz "✔" olmayan öğeleri döner.
+        """
+        auto_items = []
+        for item in self.tree.get_children():
+            values = self.tree.item(item, "values")
+            if values[4] == "✔" and values[5] == "✔" and values[6] != "✔":
+                auto_items.append(item)
+        return auto_items
+
+    def get_auto_extract_items(self):
+        """
+        Auto Mode aktifken, treeview'de Downloaded sütununda "✔" olup Extracted sütununda henüz "✔" olmayan öğeleri döner.
+        """
+        auto_items = []
+        for item in self.tree.get_children():
+            values = self.tree.item(item, "values")
+            # Değer sırası: ["", month, content, size, Downloaded, Extracted, Processed]
+            if values[4] == "✔" and values[5] != "✔":
+                auto_items.append(item)
+        return auto_items
+
     def extract_selected(self):
+        # Auto Mode aktifken, checkbox'tan seçim yapmadan uygun öğeleri topla.
+        if self.auto_mode_var.get():
+            checked_items = self.get_auto_extract_items()
+            if not checked_items:
+                self.log_to_console("No file eligible for extraction in Auto Mode!", "WARNING")
+                return
+        else:
+            checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
+            if not checked_items:
+                self.log_to_console("No file selected for extraction!", "WARNING")
+                self.show_centered_popup("Extraction Error", "No file selected for extraction!", "warning")
+                return
+
         self.log_to_console("Extracting started...", "INFO")
         self.prog_message_var.set('Waiting 2 seconds before extraction...')
-        self.after(2000, self.extract_selected_thread)
+        # Popup çağrısı yapmadan extraction thread'ini başlatıyoruz.
+        self.after(2000, lambda: self.extract_selected_thread(checked_items))
 
-    def extract_selected_thread(self):
+    def extract_selected_thread(self, checked_items):
         """
         Seçili .gz dosyalarını sırayla çıkarır.
-        Her dosya için extract işlemi tamamlandığında, UI güncellemesi ve sonrasında
-        'Extraction Completed' popup’ı çağrılır.
+        Auto Mode açıkken extraction tamamlandığında popup gösterilmez.
         """
         self.start_status_indicator()
         self.prog_message_var.set('Extracting now...')
         extracted_files = []
         failed_files = []
-        checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
-        if not checked_items:
-            self.log_to_console("No file selected!", "WARNING")
-            self.stop_status_indicator()
-            return
         items_list = list(checked_items)
 
         def process_next_item():
             if not items_list:
-                # Tüm dosyalar işlendi, tablo güncelleniyor ve popup gösteriliyor
                 self.populate_table(self.data_df)
                 if extracted_files:
-                    filename = extracted_files[-1].name
-                    message = f"{filename} successfully extracted"
+                    message = f"{extracted_files[-1].name} successfully extracted"
                 else:
                     message = "No files were extracted"
-                self.show_centered_popup("Extraction Completed", message, "info")
+                # Sadece Auto Mode kapalıysa popup göster
+                if not self.auto_mode_var.get():
+                    self.show_centered_popup("Extraction Completed", message, "info")
+                else:
+                    self.log_to_console("Extraction completed (Auto Mode)", "INFO")
                 self.stop_status_indicator()
                 return
 
@@ -2272,24 +2402,24 @@ class DiscogsDataProcessorUI(ttk.Frame):
             self.after(100, self.handle_extract_status, q)
 
     def convert_selected(self):
-        """
-        Seçili XML dosyalarını parçalara ayırıp CSV’ye dönüştüren işlemi,
-        arka plan thread’inde gerçekleştirir. UI güncellemeleri (progress bar,
-        popup mesajları vb.) ise self.after() ile ana iş parçacığında yapılır.
-        """
+        # Auto Mode aktifken, checkbox seçimine bakmadan uygun öğeleri topla.
+        if self.auto_mode_var.get():
+            checked_items = self.get_auto_convert_items()
+            if not checked_items:
+                self.log_to_console("No file eligible for conversion in Auto Mode!", "WARNING")
+                return
+        else:
+            checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
+            if not checked_items:
+                self.log_to_console("No file selected for conversion!", "WARNING")
+                self.show_centered_popup("Conversion Error", "No file selected for conversion!", "warning")
+                return
+
         self.start_status_indicator()
         try:
             self.stop_flag = False
             from queue import Queue, Empty
             import time
-
-            # Seçili öğeleri kontrol et
-            checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
-            if not checked_items:
-                self.log_to_console("No file selected for conversion!", "WARNING")
-                self.stop_status_indicator()
-                return
-
             progress_queue = Queue()
             start_time = datetime.now()
 
@@ -2331,18 +2461,14 @@ class DiscogsDataProcessorUI(ttk.Frame):
                         url = row_data["URL"].values[0]
                         folder_name = row_data["month"].values[0]
                         filename = os.path.basename(url)
-                        extracted_file = (
-                                Path(self.download_dir_var.get()) / "Datasets" / folder_name / filename
-                        ).with_suffix("")
+                        extracted_file = (Path(
+                            self.download_dir_var.get()) / "Datasets" / folder_name / filename).with_suffix("")
 
                         if not extracted_file.exists():
                             self.log_to_console(f"Extracted XML not found: {extracted_file}", "ERROR")
                             continue
 
-                        # UI: Dosya değişikliği bilgisini gönder
                         progress_queue.put(('file_change', extracted_file.name))
-
-                        # Chunking işlemi
                         progress_queue.put(('chunking_start', None))
                         try:
                             self.log_to_console(f"Chunking XML by type: {extracted_file}", "INFO")
@@ -2356,12 +2482,10 @@ class DiscogsDataProcessorUI(ttk.Frame):
                             self.log_to_console(f"Error chunking {extracted_file}: {e}", "ERROR")
                             continue
                         progress_queue.put(('chunking_done', None))
-
                         chunk_folder = extracted_file.parent / f"chunked_{content_val}"
                         combined_csv = extracted_file.with_suffix(".csv")
                         record_tag = content_val[:-1]
 
-                        # Lokal progress callback: gönderilen yüzde değeri kuyruğa eklenir.
                         def local_progress_cb(current_step, total_steps):
                             pct = (current_step / total_steps) * 100 if total_steps else 0
                             progress_queue.put(('conversion_progress', pct))
@@ -2387,11 +2511,9 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 finally:
                     progress_queue.put(('done', converted_files))
 
-            # Arka plan thread’ini başlat
             th = Thread(target=convert_thread, daemon=True)
             th.start()
 
-            # Kuyruğu işleyerek UI güncellemelerini ana iş parçacığında yapacak fonksiyon
             def process_queue():
                 try:
                     while True:
@@ -2409,23 +2531,24 @@ class DiscogsDataProcessorUI(ttk.Frame):
                             self.prog_message_var.set(f"Converting: {value:.1f}%")
                         elif msg_type == 'done':
                             converted = value
-                            if converted:
-                                last_file = converted[-1].name
-                                # Popup çağrısını ana iş parçacığında yapıyoruz
-                                self.after(0, lambda: self.show_centered_popup(
-                                    "Conversion Completed", f"{last_file} successfully converted!", "info"
-                                ))
-                            else:
-                                self.after(0, lambda: self.show_centered_popup(
-                                    "Conversion Completed", "No files were converted!", "info"
-                                ))
+                            # Popup yalnızca Auto Mode kapalıysa gösterilsin
+                            if not self.auto_mode_var.get():
+                                if converted:
+                                    last_file = converted[-1].name
+                                    self.after(0, lambda: self.show_centered_popup(
+                                        "Conversion Completed", f"{last_file} successfully converted!", "info"
+                                    ))
+                                else:
+                                    self.after(0, lambda: self.show_centered_popup(
+                                        "Conversion Completed", "No files were converted!", "info"
+                                    ))
+                        # Döngü içinde bekle
                 except Empty:
                     pass
 
                 if th.is_alive():
                     self.after(50, process_queue)
                 else:
-                    # Thread tamamlandıktan sonra kalan mesajları işleyip final UI güncellemelerini yapalım
                     try:
                         while True:
                             msg_type, value = progress_queue.get_nowait()
@@ -2436,15 +2559,18 @@ class DiscogsDataProcessorUI(ttk.Frame):
                                 self.prog_message_var.set(f"Converting: {value:.1f}%")
                             elif msg_type == 'done':
                                 converted = value
-                                if converted:
-                                    last_file = converted[-1].name
-                                    self.after(0, lambda: self.show_centered_popup(
-                                        "Conversion Completed", f"{last_file} successfully converted!", "info"
-                                    ))
-                                else:
-                                    self.after(0, lambda: self.show_centered_popup(
-                                        "Conversion Completed", "No files were converted!", "info"
-                                    ))
+                                # Auto Mode kapalıysa son popup
+                                if not self.auto_mode_var.get():
+                                    if converted:
+                                        last_file = converted[-1].name
+                                        self.after(0, lambda: self.show_centered_popup(
+                                            "Conversion Completed", f"{last_file} successfully converted!", "info"
+                                        ))
+                                    else:
+                                        self.after(0, lambda: self.show_centered_popup(
+                                            "Conversion Completed", "No files were converted!", "info"
+                                        ))
+                        # Döngü bittikten sonra süre bilgisini güncelleyelim.
                     except Empty:
                         pass
                     total_elapsed = (datetime.now() - start_time).total_seconds()
@@ -2455,15 +2581,14 @@ class DiscogsDataProcessorUI(ttk.Frame):
                     self.populate_table(self.data_df)
                     self.stop_status_indicator()
 
-            # Kuyruk işleyicisini başlat (ana iş parçacığında)
             process_queue()
-
         except Exception as e:
             self.stop_status_indicator()
             self.log_to_console(f"Error in convert_selected: {e}", "ERROR")
-            self.after(0, lambda: self.show_centered_popup(
-                "Conversion Error", f"An error occurred during conversion:\n{str(e)}", "error"
-            ))
+            if not self.auto_mode_var.get():
+                self.after(0, lambda: self.show_centered_popup(
+                    "Conversion Error", f"An error occurred during conversion:\n{str(e)}", "error"
+                ))
             self.stop_status_indicator()
 
     def get_folder_size(self, folder_path):
