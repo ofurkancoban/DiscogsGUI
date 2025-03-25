@@ -857,7 +857,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         stop_btn = ttk.Button(status_frm, command=self.stop_download, image='stop', text='Stop', compound=LEFT)
         stop_btn.grid(row=7, column=0, columnspan=2, sticky=EW)
 
-        lbl_ver = ttk.Label(left_panel, text="V.0.1", style='bg.TLabel')
+        lbl_ver = ttk.Label(left_panel, text="v.1.1", style='bg.TLabel')
         lbl_ver.pack(side='bottom', anchor='center', pady=2)
         lbl_name = ttk.Label(left_panel, text="ofurkancoban", style='bg.TLabel')
         lbl_name.pack(side='bottom', anchor='center', pady=2)
@@ -975,7 +975,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
     def on_year_change(self, event):
         selected_year = self.scrape_year_var.get()
-        self.log_to_console(f"Yeni yıl seçildi: {selected_year}", "INFO")
+        self.log_to_console(f"Selected year: {selected_year}", "INFO")
         # Örneğin, S3’te "data/2021/" dizinini kullanarak dosyaları listeleyelim:
         target_prefix = f"data/{selected_year}/"
         self.update_files_for_year(target_prefix)
@@ -1000,9 +1000,9 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 self.data_df = data_df
                 self.populate_table(data_df)
                 self.save_to_file()
-                self.log_to_console(f"{directory_prefix} içindeki dosyalar güncellendi.", "INFO")
+                self.log_to_console(f"{directory_prefix} files listed.", "INFO")
             else:
-                self.log_to_console("Seçili yılda dosya bulunamadı.", "WARNING")
+                self.log_to_console("File not found.", "WARNING")
         except Exception as e:
             self.log_to_console(f"update_files_for_year hatası: {e}", "ERROR")
     def open_coverart_window(self):
@@ -1292,8 +1292,8 @@ class DiscogsDataProcessorUI(ttk.Frame):
                     img.save(output_path)
 
                 self.log_to_console(f"Cover art created(year & month) => {output_path}", "INFO")
-                messagebox.showinfo("Cover Art", f"Cover Art image saved as:\n{output_path}")
-                wm_win.destroy()
+                self.after(0, lambda: messagebox.showinfo("Cover Art", f"Cover Art image saved as:\n{output_path}"))
+                self.after(0, wm_win.destroy)
 
             except Exception as e:
                 self.log_to_console(f"Error creating image: {e}", "ERROR")
@@ -2070,112 +2070,85 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 filename = os.path.basename(url)
                 self.start_download(url, filename, folder_name)
 
-    def extract_gz_file_with_progress(self, file_path):
+    def extract_gz_file_with_progress(self, file_path: Path, callback):
+        """
+        Verilen .gz dosyasını çıkartır ve ilerleme durumunu UI’ye yansıtır.
+        İşlem tamamlandığında veya iptal/hata durumunda callback(True) veya callback(False) çağrılır.
+        """
         import time
         from datetime import datetime
         import queue
 
-        try:
-            output_path = file_path.with_suffix('')
-            total_size = file_path.stat().st_size
+        output_path = file_path.with_suffix('')
+        total_size = file_path.stat().st_size
+        progress_queue = queue.Queue()
+        start_time = datetime.now()
+        self.prog_time_started_var.set(f"Started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
-            progress_queue = queue.Queue()
-            start_time = datetime.now()
-            self.prog_time_started_var.set(f"Started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-
-            def extract_worker():
-                try:
-                    temp_output_path = output_path.with_suffix('.xml.tmp')
-                    with gzip.open(file_path, 'rb') as f_in, open(temp_output_path, 'wb') as f_out:
-                        while True:
-                            if self.stop_flag:
-                                progress_queue.put(('stopped', None))
-                                return
-
-                            chunk = f_in.read(1024 * 1024)  # 1 MB
-                            if not chunk:
-                                break
-                            f_out.write(chunk)
-
-                            compressed_pos = f_in.fileobj.tell()
-                            percent = (compressed_pos / total_size) * 100 if total_size else 0
-                            progress_queue.put(('progress', percent))
-
-                    if temp_output_path.exists():
-                        temp_output_path.rename(output_path)
-                    progress_queue.put(('done', None))
-                except Exception as e:
-                    progress_queue.put(('error', str(e)))
-
-            def update_progress():
-                elapsed = datetime.now() - start_time
-                mins = int(elapsed.total_seconds()) // 60
-                secs = int(elapsed.total_seconds()) % 60
-                self.prog_time_elapsed_var.set(f"Elapsed: {mins} min {secs} sec")
-
-                while True:
-                    try:
-                        msg_type, value = progress_queue.get_nowait()
-                        if msg_type == 'progress':
-                            self.pb["value"] = value
-                            self.prog_message_var.set(f'Extracting: {value:.1f}%')
-                        elif msg_type == 'done':
-                            self.pb["value"] = 100
-                            self.prog_message_var.set('Extraction completed')
-                        elif msg_type == 'stopped':
-                            self.pb["value"] = 0
-                            self.prog_message_var.set('Extraction stopped')
-                            temp_output_path = output_path.with_suffix('.xml.tmp')
-                            if temp_output_path.exists():
-                                temp_output_path.unlink()
-                                self.log_to_console(f"Deleted temporary file: {temp_output_path}", "INFO")
-                            if output_path.exists():
-                                output_path.unlink()
-                                self.log_to_console(f"Deleted incomplete XML file: {output_path}", "INFO")
-                            return False
-                        elif msg_type == 'error':
-                            self.log_to_console(f"Error extracting {file_path}: {value}", "ERROR")
-                        else:
-                            pass
-                    except queue.Empty:
-                        break
-                return True
-
-            extract_thread = Thread(target=extract_worker)
-            extract_thread.start()
-
-            self.pb["value"] = 0
-            self.prog_message_var.set(f'Extracting {file_path.name}...')
-
-            while extract_thread.is_alive():
-                if self.stop_flag:
-                    break
-                if not update_progress():
-                    break
-                self.update()
-                time.sleep(0.1)
-
-            if not self.stop_flag:
-                update_progress()
-                elapsed = datetime.now() - start_time
-                mins = int(elapsed.total_seconds()) // 60
-                secs = int(elapsed.total_seconds()) % 60
-                self.prog_time_elapsed_var.set(f"Elapsed: {mins} min {secs} sec")
-                return True
-            else:
+        def extract_worker():
+            try:
                 temp_output_path = output_path.with_suffix('.xml.tmp')
+                with gzip.open(file_path, 'rb') as f_in, open(temp_output_path, 'wb') as f_out:
+                    while True:
+                        if self.stop_flag:
+                            progress_queue.put(('stopped', None))
+                            return
+                        chunk = f_in.read(1024 * 1024)  # 1 MB'lık parça
+                        if not chunk:
+                            break
+                        f_out.write(chunk)
+                        compressed_pos = f_in.fileobj.tell()
+                        percent = (compressed_pos / total_size) * 100 if total_size else 0
+                        progress_queue.put(('progress', percent))
                 if temp_output_path.exists():
-                    temp_output_path.unlink()
-                    self.log_to_console(f"Deleted temporary file: {temp_output_path}", "INFO")
-                if output_path.exists():
-                    output_path.unlink()
-                    self.log_to_console(f"Deleted incomplete XML file: {output_path}", "INFO")
-                self.log_to_console(f"Extraction stopped for {file_path.name}", "WARNING")
-                return False
+                    temp_output_path.rename(output_path)
+                progress_queue.put(('done', None))
+            except Exception as e:
+                progress_queue.put(('error', str(e)))
 
-        except Exception as e:
-            self.log_to_console(f"Error extracting {file_path}: {e}", "ERROR")
-            return False
+        def update_progress():
+            try:
+                while True:
+                    msg_type, value = progress_queue.get_nowait()
+                    if msg_type == 'progress':
+                        self.pb["value"] = value
+                        self.prog_message_var.set(f'Extracting: {value:.1f}%')
+                    elif msg_type == 'done':
+                        self.pb["value"] = 100
+                        self.prog_message_var.set('Extraction completed')
+                    elif msg_type == 'stopped':
+                        self.pb["value"] = 0
+                        self.prog_message_var.set('Extraction stopped')
+                        temp_output_path = output_path.with_suffix('.xml.tmp')
+                        if temp_output_path.exists():
+                            temp_output_path.unlink()
+                            self.log_to_console(f"Deleted temporary file: {temp_output_path}", "INFO")
+                        if output_path.exists():
+                            output_path.unlink()
+                            self.log_to_console(f"Deleted incomplete XML file: {output_path}", "INFO")
+                        callback(False)
+                        return
+                    elif msg_type == 'error':
+                        self.log_to_console(f"Error extracting {file_path}: {value}", "ERROR")
+                        callback(False)
+                        return
+            except queue.Empty:
+                pass
+
+            elapsed = datetime.now() - start_time
+            mins = int(elapsed.total_seconds()) // 60
+            secs = int(elapsed.total_seconds()) % 60
+            self.prog_time_elapsed_var.set(f"Elapsed: {mins} min {secs} sec")
+
+            if not extraction_thread.is_alive():
+                # Extraction thread tamamlandıysa (hata ya da iptal olmadıysa)
+                callback(True)
+            else:
+                self.after(100, update_progress)
+
+        extraction_thread = Thread(target=extract_worker)
+        extraction_thread.start()
+        update_progress()
 
     def extract_selected(self):
         self.log_to_console("Extracting started...", "INFO")
@@ -2183,118 +2156,101 @@ class DiscogsDataProcessorUI(ttk.Frame):
         self.after(2000, self.extract_selected_thread)
 
     def extract_selected_thread(self):
+        """
+        Seçili .gz dosyalarını sırayla çıkarır.
+        Her dosya için extract işlemi tamamlandığında, UI güncellemesi ve sonrasında
+        'Extraction Completed' popup’ı çağrılır.
+        """
         self.start_status_indicator()
-        try:
-            self.prog_message_var.set('Extracting now...')
-            extracted_files = []
-            failed_files = []
+        self.prog_message_var.set('Extracting now...')
+        extracted_files = []
+        failed_files = []
+        checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
+        if not checked_items:
+            self.log_to_console("No file selected!", "WARNING")
+            self.stop_status_indicator()
+            return
+        items_list = list(checked_items)
 
-            checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
-            if not checked_items:
-                self.log_to_console("No file selected!", "WARNING")
-                return
-
-            for item in checked_items:
-                if self.stop_flag:
-                    self.log_to_console("Extraction stopped by user", "WARNING")
-                    downloads_dir = Path(self.download_dir_var.get()) / "Datasets"
-                    if downloads_dir.exists():
-                        for folder in downloads_dir.glob("*"):
-                            if folder.is_dir():
-                                for file in folder.glob("*.xml*"):
-                                    try:
-                                        file.unlink()
-                                        self.log_to_console(f"Deleted file: {file}", "INFO")
-                                    except Exception as e:
-                                        self.log_to_console(f"Error deleting file {file}: {e}", "ERROR")
-
-                    self.pb["value"] = 0
-                    self.prog_message_var.set('Idle...')
-                    self.prog_current_file_var.set("File: none")
-                    return
-
-                values = self.tree.item(item, "values")
-                month_val = values[1]
-                content_val = values[2]
-                size_val = values[3]
-                downloaded_val = values[4]
-                extracted_val = values[5]
-                processed_val = values[6]
-
-                if downloaded_val != "✔":
-                    self.log_to_console("File not downloaded, cannot extract.", "WARNING")
-                    continue
-
-                row_data = self.data_df[
-                    (self.data_df["month"] == month_val) &
-                    (self.data_df["content"] == content_val) &
-                    (self.data_df["size"] == size_val) &
-                    (self.data_df["Downloaded"] == downloaded_val) &
-                    (self.data_df["Extracted"] == extracted_val) &
-                    (self.data_df["Processed"] == processed_val)
-                ]
-                if not row_data.empty:
-                    url = row_data["URL"].values[0]
-                    folder_name = row_data["month"].values[0]
-                    filename = os.path.basename(url)
-                    file_path = Path(self.download_dir_var.get()) / "Datasets" / folder_name / filename
-
-                    if file_path.suffix.lower() == ".gz":
-                        self.prog_current_file_var.set(f"File: {file_path.name}")
-                        success = self.extract_gz_file_with_progress(file_path)
-                        if success:
-                            output_path = file_path.with_suffix('')
-                            extracted_files.append(output_path)
-                            self.log_to_console(f"Extracted: {file_path} → {output_path}", "INFO")
-                            self.data_df.loc[self.data_df["URL"] == url, "Extracted"] = "✔"
-                            self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✖"
-                        else:
-                            failed_files.append(file_path)
-                            self.log_to_console(f"Error or stopped extracting {file_path}.", "ERROR")
-                            output_path = file_path.with_suffix('')
-                            temp_path = output_path.with_suffix('.xml.tmp')
-                            for cleanup_path in [output_path, temp_path]:
-                                if cleanup_path.exists():
-                                    try:
-                                        cleanup_path.unlink()
-                                        self.log_to_console(f"Cleaned up: {cleanup_path}", "INFO")
-                                    except Exception as e:
-                                        self.log_to_console(f"Error cleaning up {cleanup_path}: {e}", "ERROR")
-                    else:
-                        if file_path.exists() and file_path.suffix.lower() == ".xml":
-                            self.log_to_console(f"File {file_path} is already .xml; no extraction needed.", "INFO")
-                            self.data_df.loc[self.data_df["URL"] == url, "Extracted"] = "✔"
-                            self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✖"
-                        else:
-                            self.log_to_console(f"{file_path} is not a .gz file.", "WARNING")
-
-            self.after(0, self.populate_table, self.data_df)
-            if extracted_files:
-                self.log_to_console(f"Extracted files: {', '.join(map(str, extracted_files))}", "INFO")
-            if failed_files:
-                self.log_to_console(f"Failed to extract files: {', '.join(map(str, failed_files))}", "WARNING")
-
-            if not self.stop_flag:
+        def process_next_item():
+            if not items_list:
+                # Tüm dosyalar işlendi, tablo güncelleniyor ve popup gösteriliyor
+                self.populate_table(self.data_df)
                 if extracted_files:
                     filename = extracted_files[-1].name
                     message = f"{filename} successfully extracted"
                 else:
                     message = "No files were extracted"
-                self.after(0, lambda: self.show_centered_popup(
-                    "Extraction Completed",
-                    message,
-                    "info"
-                ))
+                self.show_centered_popup("Extraction Completed", message, "info")
+                self.stop_status_indicator()
+                return
 
-        except Exception as e:
-            self.log_to_console(f"Error during extraction: {e}", "ERROR")
-            self.after(0, lambda: self.show_centered_popup(
-                "Extraction Error",
-                f"Error during extraction:\n{str(e)}",
-                "error"
-            ))
+            item = items_list.pop(0)
+            values = self.tree.item(item, "values")
+            month_val = values[1]
+            content_val = values[2]
+            size_val = values[3]
+            downloaded_val = values[4]
+            extracted_val = values[5]
+            processed_val = values[6]
 
-        self.stop_status_indicator()
+            if downloaded_val != "✔":
+                self.log_to_console("File not downloaded, cannot extract.", "WARNING")
+                self.after(0, process_next_item)
+                return
+
+            row_data = self.data_df[
+                (self.data_df["month"] == month_val) &
+                (self.data_df["content"] == content_val) &
+                (self.data_df["size"] == size_val) &
+                (self.data_df["Downloaded"] == downloaded_val) &
+                (self.data_df["Extracted"] == extracted_val) &
+                (self.data_df["Processed"] == processed_val)
+                ]
+            if row_data.empty:
+                self.after(0, process_next_item)
+                return
+
+            url = row_data["URL"].values[0]
+            folder_name = row_data["month"].values[0]
+            filename = os.path.basename(url)
+            file_path = Path(self.download_dir_var.get()) / "Datasets" / folder_name / filename
+
+            if file_path.suffix.lower() == ".gz":
+                self.prog_current_file_var.set(f"File: {file_path.name}")
+
+                def extraction_callback(success):
+                    if success:
+                        output_path = file_path.with_suffix('')
+                        extracted_files.append(output_path)
+                        self.log_to_console(f"Extracted: {file_path} → {output_path}", "INFO")
+                        self.data_df.loc[self.data_df["URL"] == url, "Extracted"] = "✔"
+                        self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✖"
+                    else:
+                        failed_files.append(file_path)
+                        self.log_to_console(f"Error or stopped extracting {file_path}.", "ERROR")
+                        output_path = file_path.with_suffix('')
+                        temp_path = output_path.with_suffix('.xml.tmp')
+                        for cleanup_path in [output_path, temp_path]:
+                            if cleanup_path.exists():
+                                try:
+                                    cleanup_path.unlink()
+                                    self.log_to_console(f"Cleaned up: {cleanup_path}", "INFO")
+                                except Exception as e:
+                                    self.log_to_console(f"Error cleaning up {cleanup_path}: {e}", "ERROR")
+                    self.after(0, process_next_item)
+
+                self.extract_gz_file_with_progress(file_path, extraction_callback)
+            else:
+                if file_path.exists() and file_path.suffix.lower() == ".xml":
+                    self.log_to_console(f"File {file_path} is already .xml; no extraction needed.", "INFO")
+                    self.data_df.loc[self.data_df["URL"] == url, "Extracted"] = "✔"
+                    self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✖"
+                else:
+                    self.log_to_console(f"{file_path} is not a .gz file.", "WARNING")
+                self.after(0, process_next_item)
+
+        process_next_item()
 
     def show_centered_popup(self, title, message, message_type="info"):
         if message_type == "info":
@@ -2316,15 +2272,22 @@ class DiscogsDataProcessorUI(ttk.Frame):
             self.after(100, self.handle_extract_status, q)
 
     def convert_selected(self):
+        """
+        Seçili XML dosyalarını parçalara ayırıp CSV’ye dönüştüren işlemi,
+        arka plan thread’inde gerçekleştirir. UI güncellemeleri (progress bar,
+        popup mesajları vb.) ise self.after() ile ana iş parçacığında yapılır.
+        """
         self.start_status_indicator()
         try:
             self.stop_flag = False
             from queue import Queue, Empty
             import time
 
+            # Seçili öğeleri kontrol et
             checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
             if not checked_items:
                 self.log_to_console("No file selected for conversion!", "WARNING")
+                self.stop_status_indicator()
                 return
 
             progress_queue = Queue()
@@ -2336,7 +2299,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                     for item in checked_items:
                         if self.stop_flag:
                             self.log_to_console("Conversion stopped by user", "WARNING")
-                            self.cleanup_partial_files()
+                            self.after(0, self.cleanup_partial_files)
                             return
 
                         values = self.tree.item(item, "values")
@@ -2361,27 +2324,25 @@ class DiscogsDataProcessorUI(ttk.Frame):
                             (self.data_df["Downloaded"] == downloaded_val) &
                             (self.data_df["Extracted"] == extracted_val) &
                             (self.data_df["Processed"] == processed_val)
-                        ]
+                            ]
                         if row_data.empty:
                             continue
 
                         url = row_data["URL"].values[0]
                         folder_name = row_data["month"].values[0]
                         filename = os.path.basename(url)
-
                         extracted_file = (
-                            Path(self.download_dir_var.get())
-                            / "Datasets"
-                            / folder_name
-                            / filename
+                                Path(self.download_dir_var.get()) / "Datasets" / folder_name / filename
                         ).with_suffix("")
 
                         if not extracted_file.exists():
                             self.log_to_console(f"Extracted XML not found: {extracted_file}", "ERROR")
                             continue
 
+                        # UI: Dosya değişikliği bilgisini gönder
                         progress_queue.put(('file_change', extracted_file.name))
 
+                        # Chunking işlemi
                         progress_queue.put(('chunking_start', None))
                         try:
                             self.log_to_console(f"Chunking XML by type: {extracted_file}", "INFO")
@@ -2400,6 +2361,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                         combined_csv = extracted_file.with_suffix(".csv")
                         record_tag = content_val[:-1]
 
+                        # Lokal progress callback: gönderilen yüzde değeri kuyruğa eklenir.
                         def local_progress_cb(current_step, total_steps):
                             pct = (current_step / total_steps) * 100 if total_steps else 0
                             progress_queue.put(('conversion_progress', pct))
@@ -2419,21 +2381,21 @@ class DiscogsDataProcessorUI(ttk.Frame):
                             converted_files.append(combined_csv)
                         except Exception as e:
                             self.log_to_console(f"Error converting {extracted_file}: {e}", "ERROR")
-
                     self.log_to_console("Conversion completed for selected files.", "INFO")
                 except Exception as e:
                     self.log_to_console(f"Error in convert_thread: {e}", "ERROR")
                 finally:
                     progress_queue.put(('done', converted_files))
 
+            # Arka plan thread’ini başlat
             th = Thread(target=convert_thread, daemon=True)
             th.start()
 
-            while th.is_alive():
+            # Kuyruğu işleyerek UI güncellemelerini ana iş parçacığında yapacak fonksiyon
+            def process_queue():
                 try:
                     while True:
                         msg_type, value = progress_queue.get_nowait()
-
                         if msg_type == 'file_change':
                             self.prog_current_file_var.set(f"File: {value}")
                         elif msg_type == 'chunking_start':
@@ -2446,77 +2408,63 @@ class DiscogsDataProcessorUI(ttk.Frame):
                             self.pb["value"] = value
                             self.prog_message_var.set(f"Converting: {value:.1f}%")
                         elif msg_type == 'done':
-                            converted_files = value
-                            if converted_files:
-                                last_file = converted_files[-1].name
-                                self.show_centered_popup(
-                                    "Conversion Completed",
-                                    f"{last_file} successfully converted!",
-                                    "info"
-                                )
+                            converted = value
+                            if converted:
+                                last_file = converted[-1].name
+                                # Popup çağrısını ana iş parçacığında yapıyoruz
+                                self.after(0, lambda: self.show_centered_popup(
+                                    "Conversion Completed", f"{last_file} successfully converted!", "info"
+                                ))
                             else:
-                                self.show_centered_popup(
-                                    "Conversion Completed!",
-                                    "No files were converted!",
-                                    "info"
-                                )
+                                self.after(0, lambda: self.show_centered_popup(
+                                    "Conversion Completed", "No files were converted!", "info"
+                                ))
                 except Empty:
                     pass
 
-                now = datetime.now()
-                elapsed_sec = (now - start_time).total_seconds()
-                mins = int(elapsed_sec) // 60
-                secs = int(elapsed_sec) % 60
-                self.prog_time_elapsed_var.set(f"Elapsed: {mins} min {secs} sec")
+                if th.is_alive():
+                    self.after(50, process_queue)
+                else:
+                    # Thread tamamlandıktan sonra kalan mesajları işleyip final UI güncellemelerini yapalım
+                    try:
+                        while True:
+                            msg_type, value = progress_queue.get_nowait()
+                            if msg_type == 'file_change':
+                                self.prog_current_file_var.set(f"File: {value}")
+                            elif msg_type == 'conversion_progress':
+                                self.pb["value"] = value
+                                self.prog_message_var.set(f"Converting: {value:.1f}%")
+                            elif msg_type == 'done':
+                                converted = value
+                                if converted:
+                                    last_file = converted[-1].name
+                                    self.after(0, lambda: self.show_centered_popup(
+                                        "Conversion Completed", f"{last_file} successfully converted!", "info"
+                                    ))
+                                else:
+                                    self.after(0, lambda: self.show_centered_popup(
+                                        "Conversion Completed", "No files were converted!", "info"
+                                    ))
+                    except Empty:
+                        pass
+                    total_elapsed = (datetime.now() - start_time).total_seconds()
+                    total_mins = int(total_elapsed) // 60
+                    total_secs = int(total_elapsed) % 60
+                    self.prog_time_elapsed_var.set(f"Elapsed: {total_mins} min {total_secs} sec")
+                    self.prog_message_var.set("Conversion completed")
+                    self.populate_table(self.data_df)
+                    self.stop_status_indicator()
 
-                self.update()
-                time.sleep(0.05)
-
-            # Handle any remaining messages after thread completion
-            try:
-                while True:
-                    msg_type, value = progress_queue.get_nowait()
-                    if msg_type == 'file_change':
-                        self.prog_current_file_var.set(f"File: {value}")
-                    elif msg_type == 'conversion_progress':
-                        self.pb["value"] = value
-                        self.prog_message_var.set(f"Converting: {value:.1f}%")
-                    elif msg_type == 'done':
-                        converted_files = value
-                        if converted_files:
-                            last_file = converted_files[-1].name
-                            self.show_centered_popup(
-                                "Conversion Completed",
-                                f"{last_file} successfully converted!",
-                                "info"
-                            )
-                        else:
-                            self.show_centered_popup(
-                                "Conversion Completed",
-                                "No files were converted",
-                                "info"
-                            )
-            except Empty:
-                pass
-
-            total_elapsed = (datetime.now() - start_time).total_seconds()
-            total_mins = int(total_elapsed) // 60
-            total_secs = int(total_elapsed) % 60
-            self.prog_time_elapsed_var.set(f"Elapsed: {total_mins} min {total_secs} sec")
-
-            self.prog_message_var.set("Conversion completed")
-            self.populate_table(self.data_df)
+            # Kuyruk işleyicisini başlat (ana iş parçacığında)
+            process_queue()
 
         except Exception as e:
             self.stop_status_indicator()
             self.log_to_console(f"Error in convert_selected: {e}", "ERROR")
-            self.show_centered_popup(
-                "Conversion Error",
-                f"An error occurred during conversion:\n{str(e)}",
-                "error"
-            )
-
-        self.stop_status_indicator()
+            self.after(0, lambda: self.show_centered_popup(
+                "Conversion Error", f"An error occurred during conversion:\n{str(e)}", "error"
+            ))
+            self.stop_status_indicator()
 
     def get_folder_size(self, folder_path):
         total_size = 0
