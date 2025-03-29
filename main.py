@@ -462,7 +462,7 @@ def convert_chunked_files_to_csv(
     if logger:
         logger(f"Done! Created CSV: {output_csv}", "INFO")
     else:
-        print(f"[INFO] Done! Created CSV: {output_csv}")
+        print(f"[INFO] Done! Created CSV: {output_path}")
 
 
 ###############################################################################
@@ -988,7 +988,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
     def on_year_change(self, event):
         selected_year = self.scrape_year_var.get()
         self.log_to_console(f"Selected year: {selected_year}", "INFO")
-        # Örneğin, S3’te "data/2021/" dizinini kullanarak dosyaları listeleyelim:
+        # Örneğin, S3'te "data/2021/" dizinini kullanarak dosyaları listeleyelim:
         target_prefix = f"data/{selected_year}/"
         self.update_files_for_year(target_prefix)
     def update_files_for_year(self, directory_prefix):
@@ -1774,167 +1774,111 @@ class DiscogsDataProcessorUI(ttk.Frame):
         return data_df
 
     def start_download(self, url, filename, folder_name):
-        self.stop_flag = False
-        self.log_to_console(f"Starting download of {filename}", "INFO")
-        self.log_to_console(f"Destination folder: {folder_name}", "INFO")
-        self.log_to_console(f"Source URL: {url}", "INFO")
-        self.log_to_console("Download method: Multi-threaded (8 threads)", "INFO")
-        Thread(target=self.download_file, args=(url, filename, folder_name), daemon=True).start()
-
-    def scrape_years_from_html(url):
         """
-        Belirtilen URL'deki HTML içeriğinden, <a> etiketleri içinde yer alan 4 basamaklı yıl değerlerini kazır.
-        Örneğin, <a href="...">2021/</a> şeklinde bulunan yıl değerlerini çıkarır.
+        Dosya indirme işlemini başlatır.
         """
-        try:
-            response = requests.get(url)
-            response.raise_for_status()
-            html = response.text
-            # <a ...>2021/</a> gibi desenleri yakalayalım; yakalanan grup, 4 basamaklı yıl.
-            years = re.findall(r'<a[^>]*>(\d{4})/</a>', html)
-            return sorted(set(years))
-        except Exception as e:
-            print(f"Error scraping years: {e}")
-            return []
-
-    def parallel_download(self, url, filename, folder_name, total_size):
-        downloads_dir = Path(self.download_dir_var.get()) / "Datasets"
-        target_dir = downloads_dir / folder_name
-        target_dir.mkdir(parents=True, exist_ok=True)
-        file_path = target_dir / filename
-
-        human_size = human_readable_size(total_size)
-        self.log_to_console(f"File size: {human_size}", "INFO")
-        self.log_to_console(f"Target path: {file_path}", "INFO")
-
+        self.log_to_console(f"Starting download: {url}", "INFO")
+        self.start_status_indicator()
+        self.prog_message_var.set('Downloading...')
         self.prog_current_file_var.set(f"File: {filename}")
+        self.pb["value"] = 0
+        self.stop_flag = False
 
-        num_threads = 8
-        part_size = total_size // num_threads
+        def progress_callback(progress):
+            if self.stop_flag:
+                return
+            self.pb["value"] = progress * 100
+            self.prog_message_var.set(f'Downloading: {progress * 100:.1f}%')
+            self.update_idletasks()
 
-        partial_paths = []
-        thread_progress = [0] * num_threads
-        lock = Lock()
+        def completion_callback(success):
+            if success:
+                self.log_to_console(f"Download completed: {filename}", "INFO")
+                self.prog_message_var.set('Download completed')
+            else:
+                if self.stop_flag:
+                    self.log_to_console(f"Download stopped: {filename}", "WARNING")
+                    self.prog_message_var.set('Download stopped')
+                else:
+                    self.log_to_console(f"Download failed: {filename}", "ERROR")
+                    self.prog_message_var.set('Download failed')
+            self.stop_status_indicator()
 
-        def download_segment(idx, start, end):
-            headers = {"Range": f"bytes={start}-{end}"}
-            try:
-                r = requests.get(url, headers=headers, stream=True, timeout=30)
+        # Yeni bir thread başlat
+        Thread(
+            target=self.download_file,
+            args=(url, filename, folder_name, progress_callback, completion_callback),
+            daemon=True
+        ).start()
+
+    def download_file(self, url, filename, folder_name, progress_callback=None, completion_callback=None):
+        """
+        Dosyayı indirir ve ilerleme durumunu günceller.
+        İndirme tamamlandığında completion_callback'i çağırır.
+        Auto Mode açıksa, indirme tamamlandığında extract ve convert işlemlerini başlatır.
+        """
+        download_path = Path(self.download_dir_var.get()) / "Datasets" / folder_name
+        download_path.mkdir(parents=True, exist_ok=True)
+        file_path = download_path / filename
+
+        try:
+            self.log_to_console(f"Downloading from: {url}", "INFO")
+            with requests.get(url, stream=True) as r:
                 r.raise_for_status()
-                part_file = file_path.with_name(file_path.name + f".part{idx}")
-                partial_paths.append(part_file)
-                with open(part_file, "wb") as f:
-                    for chunk in r.iter_content(1024 * 64):
+                total_size = int(r.headers.get('content-length', 0))
+                downloaded_size = 0
+                with open(file_path, 'wb') as f:
+                    for chunk in r.iter_content(chunk_size=8192):
                         if self.stop_flag:
+                            f.close()
+                            file_path.unlink(missing_ok=True)
+                            if completion_callback:
+                                completion_callback(False)
                             return
                         if chunk:
                             f.write(chunk)
-                            with lock:
-                                thread_progress[idx] += len(chunk)
-            except Exception as e:
-                self.log_to_console(f"Error in thread {idx}: {e}", "ERROR")
+                            downloaded_size += len(chunk)
+                            if progress_callback and total_size:
+                                progress_callback(downloaded_size / total_size)
 
-        start_time = datetime.now()
-        timeout = 99999  # Very large, effectively no real "timeout"
-        self.prog_time_started_var.set(f'Started at: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
-        threads = []
-        for i in range(num_threads):
-            start = i * part_size
-            end = (i + 1) * part_size - 1 if i < num_threads - 1 else total_size - 1
-            t = Thread(target=download_segment, args=(i, start, end), daemon=True)
-            threads.append(t)
-            t.start()
-
-        while any(t.is_alive() for t in threads):
-            elapsed = (datetime.now() - start_time).total_seconds()
-            if self.stop_flag or elapsed > timeout:
-                for t in threads:
-                    t.join(timeout=0.1)
-                self.log_to_console("Download timed out or stopped.", "WARNING")
-                break
-            time.sleep(0.5)
-            downloaded_size = sum(thread_progress)
-
-            self.update_progress_bar(downloaded_size, total_size)
-            self.update_time_info(downloaded_size, total_size, start_time)
-
-        for t in threads:
-            t.join()
-
-        if self.stop_flag:
-            for p in partial_paths:
-                if p.exists():
-                    p.unlink()
-            return False
-
-        # Merge partial files
-        with open(file_path, "wb") as f_out:
-            for i in range(num_threads):
-                part_file = file_path.with_name(file_path.name + f".part{i}")
-                if part_file.exists():
-                    with open(part_file, "rb") as f_in:
-                        f_out.write(f_in.read())
-                    part_file.unlink()
-        return True
-
-    def download_file(self, url, filename, folder_name):
-        self.start_status_indicator()  # Start blinking
-        file_path = None
-        try:
-            self.prog_message_var.set('Preparing download...')
-            head = requests.head(url)
-            head.raise_for_status()
-            total_size = int(head.headers.get('Content-Length', 0))
-            accept_ranges = head.headers.get('Accept-Ranges', 'none')
-
-            if total_size > 0 and accept_ranges.lower() == 'bytes':
-                success = self.parallel_download(url, filename, folder_name, total_size)
-                if not success:
-                    if self.stop_flag:
-                        self.log_to_console("Operation Stopped", "WARNING")
-                        file_path = Path(self.download_dir_var.get()) / "Datasets" / folder_name / filename
-                        if file_path.exists():
-                            file_path.unlink()
-                            self.log_to_console(f"Incomplete file {file_path} deleted.", "WARNING")
-                        self.prog_message_var.set('Idle...')
-                        return
+            # İndirme başarılı oldu, durumu güncelle
+            self.data_df.loc[self.data_df["URL"] == url, "Downloaded"] = "✔"
+            self.populate_table(self.data_df)
+            
+            if completion_callback:
+                completion_callback(True)
+                
+            # Auto Mode açıksa, extract ve convert işlemlerini başlat
+            if self.auto_mode_var.get():
+                self.log_to_console(f"Auto Mode: Download completed, starting extraction for {filename}", "INFO")
+                
+                # Extract işlemini başlat
+                def auto_extract_callback(success):
+                    if success:
+                        output_path = file_path.with_suffix('')
+                        self.log_to_console(f"Auto Mode: Extracted {file_path} → {output_path}", "INFO")
+                        self.data_df.loc[self.data_df["URL"] == url, "Extracted"] = "✔"
+                        self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✖"
+                        self.populate_table(self.data_df)
+                        
+                        # Convert işlemini başlat
+                        self.log_to_console(f"Auto Mode: Extraction completed, starting conversion for {output_path}", "INFO")
+                        self.schedule_conversion(url, folder_name, output_path)
                     else:
-                        self.log_to_console("Parallel download failed, falling back to single-thread.", "WARNING")
-                        self.single_thread_download(url, filename, folder_name)
+                        self.log_to_console(f"Auto Mode: Error extracting {file_path}", "ERROR")
+                
+                # Dosya .gz uzantılı ise extract et
+                if file_path.suffix.lower() == ".gz":
+                    self.extract_gz_file_with_progress(file_path, auto_extract_callback)
                 else:
-                    downloads_dir = Path(self.download_dir_var.get()) / "Datasets"
-                    file_path = downloads_dir / folder_name / filename
-                    self.log_to_console(f"{filename} successfully downloaded: {file_path}", "INFO")
-                    self.data_df.loc[self.data_df["URL"] == url, "Downloaded"] = "✔"
-                    self.data_df.loc[self.data_df["URL"] == url, "Extracted"] = "✖"
-                    self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✖"
-                    self.populate_table(self.data_df)
-                    self.update_downloaded_size()
-                    self.prog_message_var.set('Idle...')
-
-                    # Popup yalnızca Auto Mode kapalıysa gösterilsin.
-                    if not self.auto_mode_var.get():
-                        self.after(0, lambda: self.show_centered_popup(
-                            "Download Completed",
-                            f"{filename} successfully downloaded",
-                            "info"
-                        ))
-            else:
-                self.single_thread_download(url, filename, folder_name)
-
+                    self.log_to_console(f"Auto Mode: {file_path} is not a .gz file, skipping extraction", "WARNING")
+                    
         except Exception as e:
-            self.log_to_console(f"Error: {e}", "ERROR")
-            if file_path and file_path.exists():
-                file_path.unlink()
-                self.log_to_console(f"Incomplete file {file_path} deleted.", "WARNING")
-
-            self.after(0, lambda: self.show_centered_popup(
-                "Download Error",
-                f"Error during download:\n{str(e)}",
-                "error"
-            ))
-
-        self.stop_status_indicator()  # Stop blinking when done
+            self.log_to_console(f"Error downloading {url}: {e}", "ERROR")
+            import traceback
+            self.log_to_console(f"Traceback: {traceback.format_exc()}", "ERROR")
+            if completion_callback:
+                completion_callback(False)
 
     def handle_download_status(self, q):
         try:
@@ -2056,40 +2000,121 @@ class DiscogsDataProcessorUI(ttk.Frame):
         self.prog_time_started_var.set("Not started")
 
     def download_selected(self):
+        """
+        Seçili dosyaları indirir.
+        Auto Mode açıkken, her dosya için ayrı ayrı işlem yapar.
+        """
         checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
         if not checked_items:
             messagebox.showwarning("Warning", "No file selected!")
             return
 
-        if self.auto_mode_var.get():
-            # Auto Mode aktifse, tüm işlemleri otomatik zincirleme olarak başlat:
-            Thread(target=self.auto_mode_process, args=(checked_items,), daemon=True).start()
-        else:
-            # Normal modda, her dosya için download işlemini başlat.
-            for item in checked_items:
-                values = self.tree.item(item, "values")
-                month_val = values[1]
-                content_val = values[2]
-                size_val = values[3]
-                downloaded_val = values[4]
-                extracted_val = values[5]
-                processed_val = values[6]
+        # Her bir seçili dosya için işlem yap
+        for item in checked_items:
+            values = self.tree.item(item, "values")
+            month_val = values[1]
+            content_val = values[2]
+            size_val = values[3]
+            downloaded_val = values[4]
+            extracted_val = values[5]
+            processed_val = values[6]
 
-                row_data = self.data_df[
-                    (self.data_df["month"] == month_val) &
-                    (self.data_df["content"] == content_val) &
-                    (self.data_df["size"] == size_val) &
-                    (self.data_df["Downloaded"] == downloaded_val) &
-                    (self.data_df["Extracted"] == extracted_val) &
-                    (self.data_df["Processed"] == processed_val)
-                ]
-                if not row_data.empty:
-                    url = row_data["URL"].values[0]
-                    folder_name = row_data["month"].values[0]  # key bazlı türetilen month
-                    filename = os.path.basename(url)
-                    self.start_download(url, filename, folder_name)
+            # Eğer dosya zaten indirilmişse, tekrar indirme
+            if downloaded_val == "✔":
+                self.log_to_console(f"File already downloaded: {month_val}/{content_val}", "INFO")
+                continue
 
-        # ─── AUTO MODE İŞLEMLERİNİ YÖNETEN YENİ METOD ─────────────────
+            # Dosya bilgilerini bul
+            row_data = self.data_df[
+                (self.data_df["month"] == month_val) &
+                (self.data_df["content"] == content_val) &
+                (self.data_df["size"] == size_val) &
+                (self.data_df["Downloaded"] == downloaded_val) &
+                (self.data_df["Extracted"] == extracted_val) &
+                (self.data_df["Processed"] == processed_val)
+            ]
+            
+            if row_data.empty:
+                self.log_to_console(f"Could not find data for {month_val}/{content_val}", "ERROR")
+                continue
+                
+            url = row_data["URL"].values[0]
+            folder_name = row_data["month"].values[0]
+            filename = os.path.basename(url)
+            
+            # Dosyayı indir
+            self.log_to_console(f"Starting download for {filename}", "INFO")
+            self.start_download(url, filename, folder_name)
+
+    def extract_selected(self):
+        """
+        Seçili dosyaları çıkarır.
+        Auto Mode açıkken, her dosya için ayrı ayrı işlem yapar.
+        """
+        checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
+        if not checked_items:
+            messagebox.showwarning("Warning", "No file selected!")
+            return
+
+        # Seçili dosyaları çıkar
+        Thread(target=self.extract_selected_thread, args=(checked_items,), daemon=True).start()
+
+    def convert_selected(self):
+        """
+        Seçili dosyaları CSV'ye dönüştürür.
+        Auto Mode açıkken, her dosya için ayrı ayrı işlem yapar.
+        """
+        checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
+        if not checked_items:
+            messagebox.showwarning("Warning", "No file selected!")
+            return
+
+        # Her bir seçili dosya için işlem yap
+        for item in checked_items:
+            values = self.tree.item(item, "values")
+            month_val = values[1]
+            content_val = values[2]
+            size_val = values[3]
+            downloaded_val = values[4]
+            extracted_val = values[5]
+            processed_val = values[6]
+
+            # Eğer dosya çıkarılmamışsa, dönüştürme
+            if extracted_val != "✔":
+                self.log_to_console(f"File not extracted, cannot convert: {month_val}/{content_val}", "WARNING")
+                continue
+
+            # Dosya bilgilerini bul
+            row_data = self.data_df[
+                (self.data_df["month"] == month_val) &
+                (self.data_df["content"] == content_val) &
+                (self.data_df["size"] == size_val) &
+                (self.data_df["Downloaded"] == downloaded_val) &
+                (self.data_df["Extracted"] == extracted_val) &
+                (self.data_df["Processed"] == processed_val)
+            ]
+            
+            if row_data.empty:
+                self.log_to_console(f"Could not find data for {month_val}/{content_val}", "ERROR")
+                continue
+                
+            url = row_data["URL"].values[0]
+            folder_name = row_data["month"].values[0]
+            filename = os.path.basename(url)
+            
+            # Çıkarılmış dosya yolunu bul
+            extracted_file = Path(self.download_dir_var.get()) / "Datasets" / folder_name / filename
+            extracted_file = extracted_file.with_suffix("")  # .gz uzantısını kaldır
+            
+            if not extracted_file.exists():
+                self.log_to_console(f"Extracted file not found: {extracted_file}", "ERROR")
+                continue
+                
+            # Dönüştürme işlemini başlat
+            self.log_to_console(f"Scheduling conversion for {extracted_file}", "INFO")
+            self.schedule_conversion(url, folder_name, extracted_file)
+
+    # ─── AUTO MODE İŞLEMLERİNİ YÖNETEN YENİ METOD ─────────────────
     def auto_mode_process(self, checked_items):
             """
             Auto Mode aktifken; seçili dosyalar için download, extract, chunking ve convert işlemlerini
@@ -2168,7 +2193,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
     def extract_gz_file_with_progress(self, file_path: Path, callback):
         """
-        Verilen .gz dosyasını çıkartır ve ilerleme durumunu UI’ye yansıtır.
+        Verilen .gz dosyasını çıkartır ve ilerleme durumunu UI'ye yansıtır.
         İşlem tamamlandığında veya iptal/hata durumunda callback(True) veya callback(False) çağrılır.
         """
         import time
@@ -2270,29 +2295,10 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 auto_items.append(item)
         return auto_items
 
-    def extract_selected(self):
-        # Auto Mode aktifken, checkbox'tan seçim yapmadan uygun öğeleri topla.
-        if self.auto_mode_var.get():
-            checked_items = self.get_auto_extract_items()
-            if not checked_items:
-                self.log_to_console("No file eligible for extraction in Auto Mode!", "WARNING")
-                return
-        else:
-            checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
-            if not checked_items:
-                self.log_to_console("No file selected for extraction!", "WARNING")
-                self.show_centered_popup("Extraction Error", "No file selected for extraction!", "warning")
-                return
-
-        self.log_to_console("Extracting started...", "INFO")
-        self.prog_message_var.set('Waiting 2 seconds before extraction...')
-        # Popup çağrısı yapmadan extraction thread'ini başlatıyoruz.
-        self.after(2000, lambda: self.extract_selected_thread(checked_items))
-
     def extract_selected_thread(self, checked_items):
         """
         Seçili .gz dosyalarını sırayla çıkarır.
-        Auto Mode açıkken extraction tamamlandığında popup gösterilmez.
+        Auto Mode açıkken extraction tamamlandığında otomatik olarak convert işlemini başlatır.
         """
         self.start_status_indicator()
         self.prog_message_var.set('Extracting now...')
@@ -2356,6 +2362,13 @@ class DiscogsDataProcessorUI(ttk.Frame):
                         self.log_to_console(f"Extracted: {file_path} → {output_path}", "INFO")
                         self.data_df.loc[self.data_df["URL"] == url, "Extracted"] = "✔"
                         self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✖"
+                        
+                        # Auto Mode açıksa, extract işleminden sonra convert işlemini başlat
+                        if self.auto_mode_var.get():
+                            self.log_to_console(f"Auto Mode: Scheduling conversion for {output_path}", "INFO")
+                            # Conversion işlemini başlatmak için bir event planla
+                            # Bu, UI thread'inin extract işlemini tamamlamasına izin verir
+                            self.after(100, lambda: self.schedule_conversion(url, folder_name, output_path))
                     else:
                         failed_files.append(file_path)
                         self.log_to_console(f"Error or stopped extracting {file_path}.", "ERROR")
@@ -2376,11 +2389,188 @@ class DiscogsDataProcessorUI(ttk.Frame):
                     self.log_to_console(f"File {file_path} is already .xml; no extraction needed.", "INFO")
                     self.data_df.loc[self.data_df["URL"] == url, "Extracted"] = "✔"
                     self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✖"
+                    
+                    # Auto Mode açıksa ve dosya zaten XML ise, convert işlemini başlat
+                    if self.auto_mode_var.get():
+                        self.log_to_console(f"Auto Mode: Scheduling conversion for {file_path}", "INFO")
+                        # Conversion işlemini başlatmak için bir event planla
+                        self.after(100, lambda: self.schedule_conversion(url, folder_name, file_path))
                 else:
                     self.log_to_console(f"{file_path} is not a .gz file.", "WARNING")
                 self.after(0, process_next_item)
 
         process_next_item()
+
+    def schedule_conversion(self, url, folder_name, extracted_file):
+        """
+        Conversion işlemini ayrı bir thread'de başlatır.
+        Bu metod UI thread'inde çağrılır ve hemen döner.
+        """
+        self.log_to_console(f"Auto Mode: Launching conversion thread for {extracted_file}", "INFO")
+        # Yeni bir process başlat (thread yerine)
+        import multiprocessing
+        
+        # Önce gerekli parametreleri hazırla
+        params = {
+            'file_path': str(extracted_file),
+            'url': url,
+            'folder_name': folder_name,
+            'download_dir': self.download_dir_var.get(),
+            'content_type': None
+        }
+        
+        # Content type'ı belirle
+        row = self.data_df[self.data_df["URL"] == url]
+        if not row.empty:
+            params['content_type'] = row.iloc[0]["content"]
+        else:
+            # URL'den içerik türünü çıkarmaya çalış
+            if "artist" in url.lower():
+                params['content_type'] = "artists"
+            elif "label" in url.lower():
+                params['content_type'] = "labels"
+            elif "master" in url.lower():
+                params['content_type'] = "masters"
+            elif "release" in url.lower():
+                params['content_type'] = "releases"
+        
+        if not params['content_type']:
+            self.log_to_console(f"Cannot determine content type for {extracted_file}", "ERROR")
+            return
+        
+        # Conversion işlemini başlat
+        self.log_to_console(f"Auto Mode: Starting conversion process for {extracted_file}", "INFO")
+        
+        # Conversion işlemini ayrı bir thread'de başlat
+        conversion_thread = Thread(
+            target=self._run_conversion_process,
+            args=(params,),
+            daemon=True
+        )
+        conversion_thread.start()
+        
+        # UI'ı güncelle
+        self.prog_message_var.set(f"Converting {os.path.basename(extracted_file)}...")
+        self.pb["value"] = 0
+
+    def _run_conversion_process(self, params):
+        """
+        Conversion işlemini gerçekleştirir.
+        Bu metod ayrı bir thread'de çalışır.
+        """
+        try:
+            extracted_file = Path(params['file_path'])
+            content_type = params['content_type']
+            url = params['url']
+            
+            # UI güncellemesi için
+            def update_ui(message, progress=None):
+                self.after(0, lambda: self.prog_message_var.set(message))
+                if progress is not None:
+                    self.after(0, lambda: self.pb.configure(value=progress))
+            
+            update_ui("Chunking XML file...")
+            
+            # Chunking işlemini başlat
+            try:
+                chunk_xml_by_type(
+                    extracted_file,
+                    content_type=content_type,
+                    records_per_file=10000,
+                    logger=lambda msg, level: self.after(0, lambda: self.log_to_console(msg, level))
+                )
+                self.after(0, lambda: self.log_to_console(f"Auto Mode: Chunking completed successfully", "INFO"))
+            except Exception as e:
+                self.after(0, lambda: self.log_to_console(f"Auto Mode: Error during chunking: {str(e)}", "ERROR"))
+                update_ui("Error during chunking")
+                return
+            
+            chunk_folder = extracted_file.parent / f"chunked_{content_type}"
+            if not chunk_folder.exists():
+                self.after(0, lambda: self.log_to_console(f"Auto Mode: Chunk folder not created: {chunk_folder}", "ERROR"))
+                update_ui("Chunk folder not created")
+                return
+                
+            combined_csv = extracted_file.with_suffix(".csv")
+            
+            # Progress callback için bir queue oluştur
+            progress_queue = queue.Queue()
+            
+            def progress_monitor():
+                try:
+                    while True:
+                        try:
+                            progress = progress_queue.get(block=False)
+                            if progress is None:  # Sentinel value
+                                break
+                            pct = progress * 100
+                            update_ui(f"Converting: {pct:.1f}%", pct)
+                        except queue.Empty:
+                            break
+                        except Exception as e:
+                            self.after(0, lambda: self.log_to_console(f"Progress monitor error: {e}", "ERROR"))
+                    self.after(100, progress_monitor)  # Check again after 100ms
+                except Exception as e:
+                    self.after(0, lambda: self.log_to_console(f"Progress monitor thread error: {e}", "ERROR"))
+            
+            # Start progress monitor
+            self.after(0, progress_monitor)
+            
+            def local_progress_cb(current_step, total_steps):
+                try:
+                    pct = current_step / total_steps if total_steps else 0
+                    progress_queue.put(pct)
+                except Exception as e:
+                    self.after(0, lambda: self.log_to_console(f"Progress callback error: {e}", "ERROR"))
+            
+            update_ui("Converting chunks to CSV...")
+            self.after(0, lambda: self.log_to_console(f"Auto Mode: Converting chunks to CSV: {chunk_folder}", "INFO"))
+            
+            # Conversion işlemini başlat
+            try:
+                convert_chunked_files_to_csv(
+                    chunk_folder,
+                    combined_csv,
+                    content_type=content_type,
+                    logger=lambda msg, level: self.after(0, lambda: self.log_to_console(msg, level)),
+                    progress_cb=local_progress_cb
+                )
+                self.after(0, lambda: self.log_to_console(f"Auto Mode: Conversion completed successfully", "INFO"))
+                # Stop progress monitor
+                progress_queue.put(None)
+            except Exception as e:
+                self.after(0, lambda: self.log_to_console(f"Auto Mode: Error during conversion: {str(e)}", "ERROR"))
+                update_ui("Error during conversion")
+                # Stop progress monitor
+                progress_queue.put(None)
+                return
+            
+            # Chunk klasörünü temizle
+            try:
+                if chunk_folder.exists():
+                    shutil.rmtree(chunk_folder, ignore_errors=True)
+                    self.after(0, lambda: self.log_to_console(f"Auto Mode: Cleaned up chunk folder", "INFO"))
+            except Exception as e:
+                self.after(0, lambda: self.log_to_console(f"Auto Mode: Error cleaning up chunk folder: {str(e)}", "WARNING"))
+            
+            # Durumu güncelle
+            if combined_csv.exists():
+                # UI thread'inde güvenli bir şekilde güncelleme yap
+                def update_status():
+                    self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✔"
+                    self.populate_table(self.data_df)
+                    self.prog_message_var.set("Conversion completed")
+                    self.log_to_console(f"Auto Mode: Successfully created {combined_csv}", "INFO")
+                
+                self.after(0, update_status)
+            else:
+                self.after(0, lambda: self.log_to_console(f"Auto Mode: CSV file not created: {combined_csv}", "ERROR"))
+                update_ui("CSV file not created")
+        except Exception as e:
+            self.after(0, lambda: self.log_to_console(f"Auto Mode: Error in conversion process: {str(e)}", "ERROR"))
+            import traceback
+            self.after(0, lambda: self.log_to_console(f"Auto Mode: Traceback: {traceback.format_exc()}", "ERROR"))
+            self.after(0, lambda: self.prog_message_var.set("Error in conversion"))
 
     def show_centered_popup(self, title, message, message_type="info"):
         if message_type == "info":
@@ -2400,196 +2590,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 self.log_to_console(status, "ERROR")
         except queue.Empty:
             self.after(100, self.handle_extract_status, q)
-
-    def convert_selected(self):
-        # Auto Mode aktifken, checkbox seçimine bakmadan uygun öğeleri topla.
-        if self.auto_mode_var.get():
-            checked_items = self.get_auto_convert_items()
-            if not checked_items:
-                self.log_to_console("No file eligible for conversion in Auto Mode!", "WARNING")
-                return
-        else:
-            checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
-            if not checked_items:
-                self.log_to_console("No file selected for conversion!", "WARNING")
-                self.show_centered_popup("Conversion Error", "No file selected for conversion!", "warning")
-                return
-
-        self.start_status_indicator()
-        try:
-            self.stop_flag = False
-            from queue import Queue, Empty
-            import time
-            progress_queue = Queue()
-            start_time = datetime.now()
-
-            def convert_thread():
-                converted_files = []
-                try:
-                    for item in checked_items:
-                        if self.stop_flag:
-                            self.log_to_console("Conversion stopped by user", "WARNING")
-                            self.after(0, self.cleanup_partial_files)
-                            return
-
-                        values = self.tree.item(item, "values")
-                        month_val = values[1]
-                        content_val = values[2]
-                        size_val = values[3]
-                        downloaded_val = values[4]
-                        extracted_val = values[5]
-                        processed_val = values[6]
-
-                        if extracted_val != "✔":
-                            self.log_to_console("File not extracted, cannot convert.", "WARNING")
-                            continue
-                        if processed_val == "✔":
-                            self.log_to_console("File already processed. Skipping...", "INFO")
-                            continue
-
-                        row_data = self.data_df[
-                            (self.data_df["month"] == month_val) &
-                            (self.data_df["content"] == content_val) &
-                            (self.data_df["size"] == size_val) &
-                            (self.data_df["Downloaded"] == downloaded_val) &
-                            (self.data_df["Extracted"] == extracted_val) &
-                            (self.data_df["Processed"] == processed_val)
-                            ]
-                        if row_data.empty:
-                            continue
-
-                        url = row_data["URL"].values[0]
-                        folder_name = row_data["month"].values[0]
-                        filename = os.path.basename(url)
-                        extracted_file = (Path(
-                            self.download_dir_var.get()) / "Datasets" / folder_name / filename).with_suffix("")
-
-                        if not extracted_file.exists():
-                            self.log_to_console(f"Extracted XML not found: {extracted_file}", "ERROR")
-                            continue
-
-                        progress_queue.put(('file_change', extracted_file.name))
-                        progress_queue.put(('chunking_start', None))
-                        try:
-                            self.log_to_console(f"Chunking XML by type: {extracted_file}", "INFO")
-                            chunk_xml_by_type(
-                                extracted_file,
-                                content_type=content_val,
-                                records_per_file=10000,
-                                logger=self.log_to_console
-                            )
-                        except Exception as e:
-                            self.log_to_console(f"Error chunking {extracted_file}: {e}", "ERROR")
-                            continue
-                        progress_queue.put(('chunking_done', None))
-                        chunk_folder = extracted_file.parent / f"chunked_{content_val}"
-                        combined_csv = extracted_file.with_suffix(".csv")
-                        record_tag = content_val[:-1]
-
-                        def local_progress_cb(current_step, total_steps):
-                            pct = (current_step / total_steps) * 100 if total_steps else 0
-                            progress_queue.put(('conversion_progress', pct))
-
-                        try:
-                            self.log_to_console(f"Converting chunks to CSV: {chunk_folder}", "INFO")
-                            convert_chunked_files_to_csv(
-                                chunk_folder,
-                                combined_csv,
-                                content_type=content_val,
-                                logger=self.log_to_console,
-                                progress_cb=local_progress_cb
-                            )
-                            shutil.rmtree(chunk_folder, ignore_errors=True)
-                            self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✔"
-                            self.log_to_console(f"Successfully created {combined_csv}", "INFO")
-                            converted_files.append(combined_csv)
-                        except Exception as e:
-                            self.log_to_console(f"Error converting {extracted_file}: {e}", "ERROR")
-                    self.log_to_console("Conversion completed for selected files.", "INFO")
-                except Exception as e:
-                    self.log_to_console(f"Error in convert_thread: {e}", "ERROR")
-                finally:
-                    progress_queue.put(('done', converted_files))
-
-            th = Thread(target=convert_thread, daemon=True)
-            th.start()
-
-            def process_queue():
-                try:
-                    while True:
-                        msg_type, value = progress_queue.get_nowait()
-                        if msg_type == 'file_change':
-                            self.prog_current_file_var.set(f"File: {value}")
-                        elif msg_type == 'chunking_start':
-                            self.prog_message_var.set("Chunking in progress...")
-                            self.pb["value"] = 0
-                        elif msg_type == 'chunking_done':
-                            self.prog_message_var.set("Starting conversion...")
-                            self.pb["value"] = 0
-                        elif msg_type == 'conversion_progress':
-                            self.pb["value"] = value
-                            self.prog_message_var.set(f"Converting: {value:.1f}%")
-                        elif msg_type == 'done':
-                            converted = value
-                            # Popup yalnızca Auto Mode kapalıysa gösterilsin
-                            if not self.auto_mode_var.get():
-                                if converted:
-                                    last_file = converted[-1].name
-                                    self.after(0, lambda: self.show_centered_popup(
-                                        "Conversion Completed", f"{last_file} successfully converted!", "info"
-                                    ))
-                                else:
-                                    self.after(0, lambda: self.show_centered_popup(
-                                        "Conversion Completed", "No files were converted!", "info"
-                                    ))
-                        # Döngü içinde bekle
-                except Empty:
-                    pass
-
-                if th.is_alive():
-                    self.after(50, process_queue)
-                else:
-                    try:
-                        while True:
-                            msg_type, value = progress_queue.get_nowait()
-                            if msg_type == 'file_change':
-                                self.prog_current_file_var.set(f"File: {value}")
-                            elif msg_type == 'conversion_progress':
-                                self.pb["value"] = value
-                                self.prog_message_var.set(f"Converting: {value:.1f}%")
-                            elif msg_type == 'done':
-                                converted = value
-                                # Auto Mode kapalıysa son popup
-                                if not self.auto_mode_var.get():
-                                    if converted:
-                                        last_file = converted[-1].name
-                                        self.after(0, lambda: self.show_centered_popup(
-                                            "Conversion Completed", f"{last_file} successfully converted!", "info"
-                                        ))
-                                    else:
-                                        self.after(0, lambda: self.show_centered_popup(
-                                            "Conversion Completed", "No files were converted!", "info"
-                                        ))
-                        # Döngü bittikten sonra süre bilgisini güncelleyelim.
-                    except Empty:
-                        pass
-                    total_elapsed = (datetime.now() - start_time).total_seconds()
-                    total_mins = int(total_elapsed) // 60
-                    total_secs = int(total_elapsed) % 60
-                    self.prog_time_elapsed_var.set(f"Elapsed: {total_mins} min {total_secs} sec")
-                    self.prog_message_var.set("Conversion completed")
-                    self.populate_table(self.data_df)
-                    self.stop_status_indicator()
-
-            process_queue()
-        except Exception as e:
-            self.stop_status_indicator()
-            self.log_to_console(f"Error in convert_selected: {e}", "ERROR")
-            if not self.auto_mode_var.get():
-                self.after(0, lambda: self.show_centered_popup(
-                    "Conversion Error", f"An error occurred during conversion:\n{str(e)}", "error"
-                ))
-            self.stop_status_indicator()
 
     def get_folder_size(self, folder_path):
         total_size = 0
@@ -2681,25 +2681,439 @@ class DiscogsDataProcessorUI(ttk.Frame):
             self.log_to_console(f"Error: {e}", "ERROR")
 
     def start_status_indicator(self):
-        """Start the status indicator blinking"""
+        """Start the blinking status indicator."""
         self.status_indicator_active = True
-        self.blink_status_indicator()
-
-    def stop_status_indicator(self):
-        """Stop the status indicator blinking"""
-        self.status_indicator_active = False
+        self.status_indicator_visible = True
+        
+        # Cancel any existing blink timer
         if self.blink_after_id:
             self.after_cancel(self.blink_after_id)
-            self.blink_after_id = None
-        self.status_indicator.itemconfig(self.indicator_oval, fill='gray')
-
+            
+        # Start blinking immediately
+        self.blink_status_indicator()
+        
+    def stop_status_indicator(self):
+        """Stop the blinking status indicator."""
+        self.status_indicator_active = False
+        
+        # Cancel any existing blink timer
+        if self.blink_after_id:
+            self.after_cancel(self.blink_after_id)
+            
+        # Set to green when stopped
+        self.status_indicator.itemconfig(self.indicator_oval, fill='green')
+        
     def blink_status_indicator(self):
-        """Toggle the status indicator visibility"""
-        if self.status_indicator_active:
-            self.status_indicator_visible = not self.status_indicator_visible
-            color = '#2ecc71' if self.status_indicator_visible else '#27ae60'
-            self.status_indicator.itemconfig(self.indicator_oval, fill=color)
-            self.blink_after_id = self.after(500, self.blink_status_indicator)
+        """Blink the status indicator between blue and light blue."""
+        if not self.status_indicator_active:
+            return
+            
+        if self.status_indicator_visible:
+            self.status_indicator.itemconfig(self.indicator_oval, fill='#007bff')  # Blue
+        else:
+            self.status_indicator.itemconfig(self.indicator_oval, fill='#63b4f4')  # Light blue
+            
+        self.status_indicator_visible = not self.status_indicator_visible
+        
+        # Schedule the next blink and store the ID
+        self.blink_after_id = self.after(500, self.blink_status_indicator)  # Blink every 500ms
+
+    def convert_single_file(self, url, folder_name, extracted_file):
+        """
+        Tek bir XML dosyasını CSV'ye dönüştürür.
+        Auto Mode için kullanılır.
+        """
+        self.log_to_console(f"Auto Mode: Starting convert_single_file for {extracted_file}", "INFO")
+        try:
+            # Dosya türünü belirle (artists, labels, releases, masters)
+            content_type = None
+            row = self.data_df[self.data_df["URL"] == url]
+            if not row.empty:
+                content_type = row.iloc[0]["content"]
+                self.log_to_console(f"Auto Mode: Content type from data_df: {content_type}", "INFO")
+            else:
+                # URL'den içerik türünü çıkarmaya çalış
+                if "artist" in url.lower():
+                    content_type = "artists"
+                elif "label" in url.lower():
+                    content_type = "labels"
+                elif "master" in url.lower():
+                    content_type = "masters"
+                elif "release" in url.lower():
+                    content_type = "releases"
+                else:
+                    self.log_to_console(f"Cannot determine content type for {extracted_file}", "ERROR")
+                    return
+                self.log_to_console(f"Auto Mode: Content type from URL: {content_type}", "INFO")
+            
+            # Dosyanın varlığını kontrol et
+            if not extracted_file.exists():
+                self.log_to_console(f"Auto Mode: File does not exist: {extracted_file}", "ERROR")
+                return
+                
+            self.log_to_console(f"Auto Mode: Chunking XML by type: {extracted_file}", "INFO")
+            
+            # Chunking işlemini başlat
+            try:
+                chunk_xml_by_type(
+                    extracted_file,
+                    content_type=content_type,
+                    records_per_file=10000,
+                    logger=self.log_to_console
+                )
+                self.log_to_console(f"Auto Mode: Chunking completed successfully", "INFO")
+            except Exception as e:
+                self.log_to_console(f"Auto Mode: Error during chunking: {str(e)}", "ERROR")
+                return
+            
+            chunk_folder = extracted_file.parent / f"chunked_{content_type}"
+            if not chunk_folder.exists():
+                self.log_to_console(f"Auto Mode: Chunk folder not created: {chunk_folder}", "ERROR")
+                return
+                
+            combined_csv = extracted_file.with_suffix(".csv")
+            
+            def local_progress_cb(current_step, total_steps):
+                pct = (current_step / total_steps) * 100 if total_steps else 0
+                self.prog_message_var.set(f"Converting: {pct:.1f}%")
+                self.pb["value"] = pct
+                self.update_idletasks()  # UI'ı güncelle
+            
+            self.log_to_console(f"Auto Mode: Converting chunks to CSV: {chunk_folder}", "INFO")
+            
+            # Conversion işlemini başlat
+            try:
+                convert_chunked_files_to_csv(
+                    chunk_folder,
+                    combined_csv,
+                    content_type=content_type,
+                    logger=self.log_to_console,
+                    progress_cb=local_progress_cb
+                )
+                self.log_to_console(f"Auto Mode: Conversion completed successfully", "INFO")
+            except Exception as e:
+                self.log_to_console(f"Auto Mode: Error during conversion: {str(e)}", "ERROR")
+                return
+            
+            # Chunk klasörünü temizle
+            try:
+                if chunk_folder.exists():
+                    shutil.rmtree(chunk_folder, ignore_errors=True)
+                    self.log_to_console(f"Auto Mode: Cleaned up chunk folder", "INFO")
+            except Exception as e:
+                self.log_to_console(f"Auto Mode: Error cleaning up chunk folder: {str(e)}", "WARNING")
+            
+            # Durumu güncelle
+            if combined_csv.exists():
+                self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✔"
+                self.populate_table(self.data_df)
+                self.log_to_console(f"Auto Mode: Successfully created {combined_csv}", "INFO")
+            else:
+                self.log_to_console(f"Auto Mode: CSV file not created: {combined_csv}", "ERROR")
+        except Exception as e:
+            self.log_to_console(f"Auto Mode: Error in convert_single_file: {str(e)}", "ERROR")
+            import traceback
+            self.log_to_console(f"Auto Mode: Traceback: {traceback.format_exc()}", "ERROR")
+
+    def convert_single_file_thread(self, url, folder_name, extracted_file):
+        """
+        Tek bir XML dosyasını CSV'ye dönüştürür.
+        Auto Mode için kullanılır ve ayrı bir thread'de çalışır.
+        """
+        self.log_to_console(f"Auto Mode: Starting convert_single_file_thread for {extracted_file}", "INFO")
+        try:
+            # Dosya türünü belirle (artists, labels, releases, masters)
+            content_type = None
+            row = self.data_df[self.data_df["URL"] == url]
+            if not row.empty:
+                content_type = row.iloc[0]["content"]
+                self.log_to_console(f"Auto Mode: Content type from data_df: {content_type}", "INFO")
+            else:
+                # URL'den içerik türünü çıkarmaya çalış
+                if "artist" in url.lower():
+                    content_type = "artists"
+                elif "label" in url.lower():
+                    content_type = "labels"
+                elif "master" in url.lower():
+                    content_type = "masters"
+                elif "release" in url.lower():
+                    content_type = "releases"
+                else:
+                    self.log_to_console(f"Cannot determine content type for {extracted_file}", "ERROR")
+                    return
+                self.log_to_console(f"Auto Mode: Content type from URL: {content_type}", "INFO")
+            
+            # Dosyanın varlığını kontrol et
+            if not extracted_file.exists():
+                self.log_to_console(f"Auto Mode: File does not exist: {extracted_file}", "ERROR")
+                return
+                
+            self.log_to_console(f"Auto Mode: Chunking XML by type: {extracted_file}", "INFO")
+            
+            # UI güncellemesi için
+            def update_ui(message, progress=None):
+                self.after(0, lambda: self.prog_message_var.set(message))
+                if progress is not None:
+                    self.after(0, lambda: self.pb.configure(value=progress))
+            
+            update_ui("Chunking XML file...")
+            
+            # Chunking işlemini başlat
+            try:
+                chunk_xml_by_type(
+                    extracted_file,
+                    content_type=content_type,
+                    records_per_file=10000,
+                    logger=self.log_to_console
+                )
+                self.log_to_console(f"Auto Mode: Chunking completed successfully", "INFO")
+            except Exception as e:
+                self.log_to_console(f"Auto Mode: Error during chunking: {str(e)}", "ERROR")
+                update_ui("Error during chunking")
+                return
+            
+            chunk_folder = extracted_file.parent / f"chunked_{content_type}"
+            if not chunk_folder.exists():
+                self.log_to_console(f"Auto Mode: Chunk folder not created: {chunk_folder}", "ERROR")
+                update_ui("Chunk folder not created")
+                return
+                
+            combined_csv = extracted_file.with_suffix(".csv")
+            
+            def local_progress_cb(current_step, total_steps):
+                pct = (current_step / total_steps) * 100 if total_steps else 0
+                update_ui(f"Converting: {pct:.1f}%", pct)
+            
+            update_ui("Converting chunks to CSV...")
+            self.log_to_console(f"Auto Mode: Converting chunks to CSV: {chunk_folder}", "INFO")
+            
+            # Conversion işlemini başlat
+            try:
+                convert_chunked_files_to_csv(
+                    chunk_folder,
+                    combined_csv,
+                    content_type=content_type,
+                    logger=self.log_to_console,
+                    progress_cb=local_progress_cb
+                )
+                self.log_to_console(f"Auto Mode: Conversion completed successfully", "INFO")
+            except Exception as e:
+                self.log_to_console(f"Auto Mode: Error during conversion: {str(e)}", "ERROR")
+                update_ui("Error during conversion")
+                return
+            
+            # Chunk klasörünü temizle
+            try:
+                if chunk_folder.exists():
+                    shutil.rmtree(chunk_folder, ignore_errors=True)
+                    self.log_to_console(f"Auto Mode: Cleaned up chunk folder", "INFO")
+            except Exception as e:
+                self.log_to_console(f"Auto Mode: Error cleaning up chunk folder: {str(e)}", "WARNING")
+            
+            # Durumu güncelle
+            if combined_csv.exists():
+                # UI thread'inde güvenli bir şekilde güncelleme yap
+                def update_status():
+                    self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✔"
+                    self.populate_table(self.data_df)
+                    self.prog_message_var.set("Conversion completed")
+                    self.log_to_console(f"Auto Mode: Successfully created {combined_csv}", "INFO")
+                
+                self.after(0, update_status)
+            else:
+                self.log_to_console(f"Auto Mode: CSV file not created: {combined_csv}", "ERROR")
+                update_ui("CSV file not created")
+        except Exception as e:
+            self.log_to_console(f"Auto Mode: Error in convert_single_file_thread: {str(e)}", "ERROR")
+            import traceback
+            self.log_to_console(f"Auto Mode: Traceback: {traceback.format_exc()}", "ERROR")
+            self.after(0, lambda: self.prog_message_var.set("Error in conversion"))
+
+    def extract_gz_file_with_progress(self, gz_file_path, completion_callback=None):
+        """Extract a .gz file with progress updates."""
+        self.log_to_console(f"Extracting: {gz_file_path}", "INFO")
+        self.start_status_indicator()  # Start the status indicator
+        
+        # Set start time
+        start_time = datetime.now()
+        self.prog_time_started_var.set(f'Started at: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
+        
+        # Reset progress metrics
+        self.prog_speed_var.set('Speed: 0.00 MB/s')
+        self.prog_time_elapsed_var.set('Elapsed: 0 sec')
+        self.prog_time_left_var.set('Left: 0 sec')
+        
+        output_path = gz_file_path.with_suffix('')
+        self.prog_message_var.set('Extracting...')
+        self.prog_current_file_var.set(f"File: {gz_file_path.name}")
+        
+        try:
+            # Get file size
+            total_size = gz_file_path.stat().st_size
+            
+            # Open files
+            with gzip.open(gz_file_path, 'rb') as f_in:
+                with open(output_path, 'wb') as f_out:
+                    # Read and write in chunks
+                    chunk_size = 1024 * 1024  # 1MB chunks
+                    extracted_size = 0
+                    
+                    while True:
+                        chunk = f_in.read(chunk_size)
+                        if not chunk:
+                            break
+                        
+                        f_out.write(chunk)
+                        extracted_size += len(chunk)
+                        
+                        # Update progress
+                        if total_size > 0:
+                            percentage = (extracted_size / total_size) * 100
+                            self.pb['value'] = percentage
+                            self.prog_message_var.set(f'Extracting: {percentage:.2f}%')
+                        
+                        # Update speed and time metrics
+                        elapsed = (datetime.now() - start_time).total_seconds()
+                        if elapsed > 0:
+                            speed = (extracted_size / elapsed) / (1024 * 1024)  # MB/s
+                            self.prog_speed_var.set(f"Speed: {speed:.2f} MB/s")
+                            self.prog_time_elapsed_var.set(f"Elapsed: {int(elapsed) // 60} min {int(elapsed) % 60} sec")
+                            
+                            if extracted_size > 0 and total_size > 0:
+                                left = (total_size - extracted_size) / (extracted_size / elapsed)
+                                left_minutes = int(left // 60)
+                                left_seconds = int(left % 60)
+                                self.prog_time_left_var.set(f"Left: {left_minutes} min {left_seconds} sec")
+                        
+                        # Update UI
+                        self.update_idletasks()
+            
+            self.log_to_console(f"Extraction completed: {output_path}", "INFO")
+            self.prog_message_var.set('Extraction completed')
+            
+            # Update data_df
+            url = None
+            for idx, row in self.data_df.iterrows():
+                folder_name = str(row["month"])
+                filename = os.path.basename(row["URL"])
+                file_path = Path(self.download_dir_var.get()) / "Datasets" / folder_name / filename
+                if file_path == gz_file_path:
+                    url = row["URL"]
+                    break
+                
+            if url:
+                self.data_df.loc[self.data_df["URL"] == url, "Extracted"] = "✔"
+                self.populate_table(self.data_df)
+            
+            # Stop the status indicator
+            self.stop_status_indicator()
+            
+            if completion_callback:
+                completion_callback(True)
+                
+        except Exception as e:
+            self.log_to_console(f"Error extracting {gz_file_path}: {e}", "ERROR")
+            self.prog_message_var.set('Extraction failed')
+            self.stop_status_indicator()
+            
+            if completion_callback:
+                completion_callback(False)
+
+    def download_file_with_progress(self, url, output_path, completion_callback=None):
+        """Download a file with progress updates."""
+        self.log_to_console(f"Downloading: {url}", "INFO")
+        self.start_status_indicator()  # Start the status indicator
+        
+        # Set start time
+        start_time = datetime.now()
+        self.prog_time_started_var.set(f'Started at: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
+        
+        # Reset progress metrics
+        self.prog_speed_var.set('Speed: 0.00 MB/s')
+        self.prog_time_elapsed_var.set('Elapsed: 0 sec')
+        self.prog_time_left_var.set('Left: 0 sec')
+        
+        self.prog_message_var.set('Downloading...')
+        self.prog_current_file_var.set(f"File: {os.path.basename(url)}")
+        
+        try:
+            # Create parent directory if it doesn't exist
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Stream the download with progress updates
+            response = requests.get(url, stream=True)
+            response.raise_for_status()
+            
+            # Get total file size
+            total_size = int(response.headers.get('content-length', 0))
+            
+            # Initialize variables for progress tracking
+            downloaded_size = 0
+            last_update_time = time.time()
+            update_interval = 0.5  # Update UI every 0.5 seconds
+            
+            with open(output_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if self.stop_flag:
+                        self.log_to_console("Download stopped by user", "WARNING")
+                        if completion_callback:
+                            completion_callback(False)
+                        return False
+                    
+                    if chunk:
+                        f.write(chunk)
+                        downloaded_size += len(chunk)
+                        
+                        # Update UI at intervals to avoid too frequent updates
+                        current_time = time.time()
+                        if current_time - last_update_time >= update_interval:
+                            # Update progress bar
+                            if total_size > 0:
+                                percentage = (downloaded_size / total_size) * 100
+                                self.pb['value'] = percentage
+                                self.prog_message_var.set(f'Downloading: {percentage:.2f}%')
+                            
+                            # Update speed and time metrics
+                            elapsed = (datetime.now() - start_time).total_seconds()
+                            if elapsed > 0:
+                                # Calculate speed in MB/s
+                                speed = (downloaded_size / elapsed) / (1024 * 1024)
+                                self.prog_speed_var.set(f"Speed: {speed:.2f} MB/s")
+                                
+                                # Update elapsed time
+                                elapsed_min = int(elapsed) // 60
+                                elapsed_sec = int(elapsed) % 60
+                                self.prog_time_elapsed_var.set(f"Elapsed: {elapsed_min} min {elapsed_sec} sec")
+                                
+                                # Estimate remaining time
+                                if downloaded_size > 0 and total_size > 0:
+                                    left = (total_size - downloaded_size) / (downloaded_size / elapsed)
+                                    left_minutes = int(left // 60)
+                                    left_seconds = int(left % 60)
+                                    self.prog_time_left_var.set(f"Left: {left_minutes} min {left_seconds} sec")
+                            
+                            # Update UI
+                            self.update_idletasks()
+                            last_update_time = current_time
+            
+            self.log_to_console(f"Download completed: {output_path}", "INFO")
+            self.prog_message_var.set('Download completed')
+            
+            # Stop the status indicator
+            self.stop_status_indicator()
+            
+            if completion_callback:
+                completion_callback(True)
+            return True
+            
+        except Exception as e:
+            self.log_to_console(f"Error downloading {url}: {e}", "ERROR")
+            self.prog_message_var.set('Download failed')
+            self.stop_status_indicator()
+            
+            if completion_callback:
+                completion_callback(False)
+            return False
 
 
 def main():
