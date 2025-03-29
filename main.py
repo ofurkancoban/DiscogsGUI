@@ -36,18 +36,20 @@ def sanitize_line(line: str) -> str:
     line = re.sub(r'&(?![a-zA-Z0-9#]+;)', '&amp;', line)
     return line
 
-def chunk_xml_by_type(xml_file: Path, content_type: str, records_per_file=10000, logger=None):
-    """
-    A purely line-based chunker for old Discogs dumps that have no single root.
-    No ElementTree usage => no 'junk after document element'.
-    We just scan for <artist>...</artist>, <label>...</label>, or <release>...</release>.
+import time
+import io
 
-    :param xml_file: the path to the old .xml
-    :param content_type: e.g. 'artists', 'labels', or 'releases'
-    :param records_per_file: how many <record_tag> blocks per chunk
-    :param logger: optional logging function
+def chunk_xml_by_type(
+    xml_file: Path,
+    content_type: str,
+    records_per_file=10000,
+    logger=None,
+    progress_cb=None  # <-- YENİ: harici bir callback
+):
     """
-    record_tag = content_type[:-1].lower()  # 'artists'->'artist', 'labels'->'label', 'releases'->'release'
+    line-based chunker + progress callback (bytes bazında)
+    """
+    record_tag = content_type[:-1].lower()
     start_pat = re.compile(fr'<{record_tag}\b', re.IGNORECASE)
     end_pat   = re.compile(fr'</{record_tag}>', re.IGNORECASE)
 
@@ -63,6 +65,12 @@ def chunk_xml_by_type(xml_file: Path, content_type: str, records_per_file=10000,
     buffer_lines = []
     current_chunk_file = None
 
+    total_size = xml_file.stat().st_size      # Toplam byte
+    current_bytes = 0                         # Okunan byte
+    start_time = time.time()
+    last_update_time = start_time
+    update_interval = 0.5  # 0.5 sn’de bir GUI güncelle
+
     def open_new_chunk():
         nonlocal chunk_count, current_chunk_file, record_count
         chunk_count += 1
@@ -72,8 +80,6 @@ def chunk_xml_by_type(xml_file: Path, content_type: str, records_per_file=10000,
         record_count = 0
         if logger:
             logger(f"Created new chunk: {chunk_path.name}", "INFO")
-        else:
-            print(f"Created new chunk: {chunk_path.name}")
 
     def close_chunk():
         nonlocal current_chunk_file
@@ -82,23 +88,28 @@ def chunk_xml_by_type(xml_file: Path, content_type: str, records_per_file=10000,
             current_chunk_file.close()
             current_chunk_file = None
 
-    # Start the first chunk
+    # İlk chunk dosyasını aç
     open_new_chunk()
 
-    with xml_file.open('r', encoding='utf-8', errors='ignore') as f:
-        for raw_line in f:
-            line = sanitize_line(raw_line)
+    # binary okuma -> text çeviriyoruz
+    with xml_file.open('rb') as raw_f:
+        text_f = io.TextIOWrapper(raw_f, encoding='utf-8', errors='ignore')
 
+        for raw_line in text_f:
+            # ham satırı encode() etmeye gerek kalmadan len(raw_line) kullanmak genelde yeterlidir;
+            # ama unicode karakterler varsa daha doğru ölçmek için:
+            line_byte_count = len(raw_line.encode('utf-8', 'ignore'))
+            current_bytes += line_byte_count
+
+            line = sanitize_line(raw_line)
             if not inside_record:
-                # Check if line has <artist> or <label> or <release>
                 if start_pat.search(line):
                     inside_record = True
                     buffer_lines = [line]
             else:
-                # We are inside a record block, keep collecting
                 buffer_lines.append(line)
                 if end_pat.search(line):
-                    # Found closing tag
+                    # record sonu
                     record_xml = ''.join(buffer_lines)
                     current_chunk_file.write(record_xml + '\n')
                     record_count += 1
@@ -109,7 +120,18 @@ def chunk_xml_by_type(xml_file: Path, content_type: str, records_per_file=10000,
                         close_chunk()
                         open_new_chunk()
 
+            # Belirli aralıkta callback
+            now = time.time()
+            if (now - last_update_time) >= update_interval:
+                if progress_cb:
+                    progress_cb(current_bytes, total_size, start_time)
+                last_update_time = now
+
     close_chunk()
+
+    # Son bir kez %100’e yakın ilerlemeyi iletelim:
+    if progress_cb:
+        progress_cb(total_size, total_size, start_time)
 
     if logger:
         logger(f"[LINE-BASED] Finished. Created {chunk_count} chunk(s).", "INFO")
@@ -393,18 +415,6 @@ def write_chunk_to_csv(chunk_file_path: Path, csv_writer: csv.DictWriter, all_co
         logger(f"Written data from {chunk_file_path.name} to CSV.", "INFO")
     else:
         print(f"Written data from {chunk_file_path.name} to CSV.")
-
-
-def convert_progress_callback(self, current_step, total_steps):
-    """Called when each chunk is completed during the conversion process."""
-    if total_steps == 0:
-        percentage = 0
-    else:
-        percentage = (current_step / total_steps) * 100
-
-    self.pb["value"] = percentage
-    self.prog_message_var.set(f"Converting: {percentage:.2f}%")
-    self.update_idletasks()
 
 
 def convert_chunked_files_to_csv(
@@ -1812,14 +1822,12 @@ class DiscogsDataProcessorUI(ttk.Frame):
         ).start()
 
     def download_file(self, url, filename, folder_name, progress_callback=None, completion_callback=None):
-        """
-        Dosyayı indirir ve ilerleme durumunu günceller.
-        İndirme tamamlandığında completion_callback'i çağırır.
-        Auto Mode açıksa, indirme tamamlandığında extract ve convert işlemlerini başlatır.
-        """
         download_path = Path(self.download_dir_var.get()) / "Datasets" / folder_name
         download_path.mkdir(parents=True, exist_ok=True)
         file_path = download_path / filename
+
+        start_time = datetime.now()
+        self.after(0, self.prog_time_started_var.set, f'Started at: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
 
         try:
             self.log_to_console(f"Downloading from: {url}", "INFO")
@@ -1827,32 +1835,58 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 r.raise_for_status()
                 total_size = int(r.headers.get('content-length', 0))
                 downloaded_size = 0
+                chunk_size = 8192
+
+                last_update_time = time.time()
+
                 with open(file_path, 'wb') as f:
-                    for chunk in r.iter_content(chunk_size=8192):
+                    for chunk in r.iter_content(chunk_size=chunk_size):
                         if self.stop_flag:
                             f.close()
                             file_path.unlink(missing_ok=True)
                             if completion_callback:
                                 completion_callback(False)
                             return
+
                         if chunk:
                             f.write(chunk)
                             downloaded_size += len(chunk)
+
+                            # Progress update
                             if progress_callback and total_size:
                                 progress_callback(downloaded_size / total_size)
 
-            # İndirme başarılı oldu, durumu güncelle
+                            current_time = time.time()
+                            if current_time - last_update_time >= 1:
+                                elapsed = (datetime.now() - start_time).total_seconds()
+                                speed = (downloaded_size / elapsed) / (1024 * 1024) if elapsed > 0 else 0.0
+                                self.after(0, self.prog_speed_var.set, f'Speed: {speed:.2f} MB/s')
+                                self.after(0, self.prog_time_elapsed_var.set,
+                                           f'Elapsed: {int(elapsed) // 60} min {int(elapsed) % 60} sec')
+
+                                if total_size > 0:
+                                    percentage = (downloaded_size / total_size) * 100
+                                    left = (total_size - downloaded_size) / (
+                                                downloaded_size / elapsed) if downloaded_size > 0 else 0
+                                    left_minutes = int(left // 60)
+                                    left_seconds = int(left % 60)
+                                    self.after(0, self.prog_time_left_var.set,
+                                               f'Left: {left_minutes} min {left_seconds} sec')
+                                    self.after(0, self.prog_message_var.set, f'Downloading: {percentage:.2f}%')
+
+                                last_update_time = current_time
+
+            # Başarıyla indirme sonrası
             self.data_df.loc[self.data_df["URL"] == url, "Downloaded"] = "✔"
             self.populate_table(self.data_df)
-            
+
             if completion_callback:
                 completion_callback(True)
-                
+
             # Auto Mode açıksa, extract ve convert işlemlerini başlat
             if self.auto_mode_var.get():
                 self.log_to_console(f"Auto Mode: Download completed, starting extraction for {filename}", "INFO")
-                
-                # Extract işlemini başlat
+
                 def auto_extract_callback(success):
                     if success:
                         output_path = file_path.with_suffix('')
@@ -1860,107 +1894,25 @@ class DiscogsDataProcessorUI(ttk.Frame):
                         self.data_df.loc[self.data_df["URL"] == url, "Extracted"] = "✔"
                         self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✖"
                         self.populate_table(self.data_df)
-                        
+
                         # Convert işlemini başlat
-                        self.log_to_console(f"Auto Mode: Extraction completed, starting conversion for {output_path}", "INFO")
+                        self.log_to_console(f"Auto Mode: Extraction completed, starting conversion for {output_path}",
+                                            "INFO")
                         self.schedule_conversion(url, folder_name, output_path)
                     else:
                         self.log_to_console(f"Auto Mode: Error extracting {file_path}", "ERROR")
-                
-                # Dosya .gz uzantılı ise extract et
+
                 if file_path.suffix.lower() == ".gz":
                     self.extract_gz_file_with_progress(file_path, auto_extract_callback)
                 else:
                     self.log_to_console(f"Auto Mode: {file_path} is not a .gz file, skipping extraction", "WARNING")
-                    
+
         except Exception as e:
             self.log_to_console(f"Error downloading {url}: {e}", "ERROR")
             import traceback
             self.log_to_console(f"Traceback: {traceback.format_exc()}", "ERROR")
             if completion_callback:
                 completion_callback(False)
-
-    def handle_download_status(self, q):
-        try:
-            status = q.get_nowait()
-            if status == 'Download finished':
-                self.populate_table(self.data_df)
-                self.log_to_console("Download completed", "INFO")
-            elif status == 'Download failed':
-                self.log_to_console("Download failed", "ERROR")
-            else:
-                self.log_to_console(status, "ERROR")
-        except queue.Empty:
-            self.after(100, self.handle_download_status, q)
-
-    def single_thread_download(self, url, filename, folder_name):
-        """Single-threaded download implementation."""
-        self.log_to_console("Switching to single-threaded download", "INFO")
-        self.log_to_console("Reason: Server doesn't support partial downloads", "INFO")
-
-        downloads_dir = Path(self.download_dir_var.get()) / "Datasets"
-        target_dir = downloads_dir / folder_name
-        target_dir.mkdir(parents=True, exist_ok=True)
-        file_path = target_dir / filename
-
-        try:
-            response = requests.get(url, stream=True)
-            total_size = int(response.headers.get('content-length', 0))
-            human_size = human_readable_size(total_size)
-
-            self.log_to_console(f"File size: {human_size}", "INFO")
-            self.log_to_console(f"Target path: {file_path}", "INFO")
-
-            block_size = 1024 * 64
-            self.pb["value"] = 0
-            self.pb["maximum"] = total_size
-            self.pb.update()
-
-            self.prog_current_file_var.set(f"File: {filename}")
-
-            start_time = datetime.now()
-            self.prog_time_started_var.set(f'Started at: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
-            downloaded_size = 0
-
-            with open(file_path, "wb") as file:
-                for data in response.iter_content(block_size):
-                    if self.stop_flag:
-                        ...
-                        return
-                    file.write(data)
-                    downloaded_size += len(data)
-                    self.pb["value"] = downloaded_size
-                    self.pb.update()
-
-                    elapsed = (datetime.now() - start_time).total_seconds()
-                    speed = (downloaded_size / elapsed) / (1024 * 1024) if elapsed > 0 else 0.0
-                    self.prog_speed_var.set(f'Speed: {speed:.2f} MB/s')
-
-                    if total_size > 0 and downloaded_size > 0:
-                        percentage = (downloaded_size / total_size) * 100
-                        left = int(
-                            (total_size - downloaded_size) / (downloaded_size / elapsed)) if downloaded_size > 0 else 0
-                        left_minutes = left // 60
-                        left_seconds = left % 60
-                        self.prog_time_left_var.set(f'Left: {left_minutes} min {left_seconds} sec')
-                        self.prog_message_var.set(f'Downloading: {percentage:.2f}%')
-
-            self.prog_message_var.set('Idle...')
-            self.log_to_console(f"{filename} successfully downloaded: {file_path}", "INFO")
-            self.data_df.loc[self.data_df["URL"] == url, "Downloaded"] = "✔"
-            self.data_df.loc[self.data_df["URL"] == url, "Extracted"] = "✖"
-            self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✖"
-            self.populate_table(self.data_df)
-            self.update_downloaded_size()
-
-            self.show_centered_popup(
-                "Download Complete",
-                f"{filename} successfully downloaded!",
-                "info"
-            )
-
-        except Exception as e:
-            ...
 
     def stop_download(self):
         self.stop_status_indicator()  # Stop blinking
@@ -2191,85 +2143,58 @@ class DiscogsDataProcessorUI(ttk.Frame):
             self.after(0,
                        lambda: self.show_centered_popup("Auto Mode", "All operations completed successfully!", "info"))
 
-    def extract_gz_file_with_progress(self, file_path: Path, callback):
-        """
-        Verilen .gz dosyasını çıkartır ve ilerleme durumunu UI'ye yansıtır.
-        İşlem tamamlandığında veya iptal/hata durumunda callback(True) veya callback(False) çağrılır.
-        """
-        import time
-        from datetime import datetime
-        import queue
-
-        output_path = file_path.with_suffix('')
-        total_size = file_path.stat().st_size
-        progress_queue = queue.Queue()
-        start_time = datetime.now()
-        self.prog_time_started_var.set(f"Started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-
-        def extract_worker():
-            try:
-                temp_output_path = output_path.with_suffix('.xml.tmp')
-                with gzip.open(file_path, 'rb') as f_in, open(temp_output_path, 'wb') as f_out:
-                    while True:
-                        if self.stop_flag:
-                            progress_queue.put(('stopped', None))
-                            return
-                        chunk = f_in.read(1024 * 1024)  # 1 MB'lık parça
-                        if not chunk:
-                            break
-                        f_out.write(chunk)
-                        compressed_pos = f_in.fileobj.tell()
-                        percent = (compressed_pos / total_size) * 100 if total_size else 0
-                        progress_queue.put(('progress', percent))
-                if temp_output_path.exists():
-                    temp_output_path.rename(output_path)
-                progress_queue.put(('done', None))
-            except Exception as e:
-                progress_queue.put(('error', str(e)))
-
-        def update_progress():
-            try:
-                while True:
-                    msg_type, value = progress_queue.get_nowait()
-                    if msg_type == 'progress':
-                        self.pb["value"] = value
-                        self.prog_message_var.set(f'Extracting: {value:.1f}%')
-                    elif msg_type == 'done':
-                        self.pb["value"] = 100
-                        self.prog_message_var.set('Extraction completed')
-                    elif msg_type == 'stopped':
-                        self.pb["value"] = 0
-                        self.prog_message_var.set('Extraction stopped')
-                        temp_output_path = output_path.with_suffix('.xml.tmp')
-                        if temp_output_path.exists():
-                            temp_output_path.unlink()
-                            self.log_to_console(f"Deleted temporary file: {temp_output_path}", "INFO")
-                        if output_path.exists():
-                            output_path.unlink()
-                            self.log_to_console(f"Deleted incomplete XML file: {output_path}", "INFO")
-                        callback(False)
-                        return
-                    elif msg_type == 'error':
-                        self.log_to_console(f"Error extracting {file_path}: {value}", "ERROR")
-                        callback(False)
-                        return
-            except queue.Empty:
-                pass
-
-            elapsed = datetime.now() - start_time
-            mins = int(elapsed.total_seconds()) // 60
-            secs = int(elapsed.total_seconds()) % 60
-            self.prog_time_elapsed_var.set(f"Elapsed: {mins} min {secs} sec")
-
-            if not extraction_thread.is_alive():
-                # Extraction thread tamamlandıysa (hata ya da iptal olmadıysa)
-                callback(True)
-            else:
-                self.after(100, update_progress)
-
-        extraction_thread = Thread(target=extract_worker)
-        extraction_thread.start()
-        update_progress()
+    def extract_gz_file_with_progress(self, gz_file_path, completion_callback=None):
+        """Extract a .gz file using a simple, direct approach for maximum speed."""
+        self.start_status_indicator()
+        self.prog_message_var.set('Extracting...')
+        self.prog_current_file_var.set(f"File: {gz_file_path.name}")
+        
+        output_path = gz_file_path.with_suffix('')
+        
+        try:
+            start_time = datetime.now()
+            self.prog_time_started_var.set(f'Started at: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
+            
+            # Set progress bar to indeterminate mode
+            self.pb.configure(mode='indeterminate')
+            self.pb.start(10)
+            
+            # Simple, direct approach with minimal overhead
+            with open(gz_file_path, 'rb') as f_in:
+                with gzip.GzipFile(fileobj=f_in) as gz:
+                    with open(output_path, 'wb') as f_out:
+                        f_out.write(gz.read())
+            
+            # Stop indeterminate progress and set to 100%
+            self.pb.stop()
+            self.pb.configure(mode='determinate')
+            self.pb['value'] = 100
+            
+            # Calculate elapsed time
+            elapsed = (datetime.now() - start_time).total_seconds()
+            elapsed_str = f'{int(elapsed // 60)} min {int(elapsed % 60)} sec'
+            self.prog_time_elapsed_var.set(f'Elapsed: {elapsed_str}')
+            
+            # Clear other progress indicators
+            self.prog_speed_var.set('Speed: N/A')
+            self.prog_time_left_var.set('Left: 0 sec')
+            
+            self.prog_message_var.set('Extraction completed')
+            self.log_to_console(f"Extraction completed: {gz_file_path} → {output_path} in {elapsed_str}", "INFO")
+            self.stop_status_indicator()
+            
+            if completion_callback:
+                completion_callback(True)
+                
+        except Exception as e:
+            self.pb.stop()
+            self.pb.configure(mode='determinate')
+            self.log_to_console(f"Error extracting {gz_file_path}: {e}", "ERROR")
+            self.prog_message_var.set('Extraction failed')
+            self.stop_status_indicator()
+            
+            if completion_callback:
+                completion_callback(False)
 
     def get_auto_convert_items(self):
         """
@@ -2580,16 +2505,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         elif message_type == "error":
             messagebox.showerror(title, message, parent=self)
 
-    def handle_extract_status(self, q):
-        try:
-            status = q.get_nowait()
-            if status == 'Extraction finished':
-                self.populate_table(self.data_df)
-                self.log_to_console("Extraction completed", "INFO")
-            else:
-                self.log_to_console(status, "ERROR")
-        except queue.Empty:
-            self.after(100, self.handle_extract_status, q)
+
 
     def get_folder_size(self, folder_path):
         total_size = 0
@@ -2718,402 +2634,125 @@ class DiscogsDataProcessorUI(ttk.Frame):
         # Schedule the next blink and store the ID
         self.blink_after_id = self.after(500, self.blink_status_indicator)  # Blink every 500ms
 
-    def convert_single_file(self, url, folder_name, extracted_file):
-        """
-        Tek bir XML dosyasını CSV'ye dönüştürür.
-        Auto Mode için kullanılır.
-        """
-        self.log_to_console(f"Auto Mode: Starting convert_single_file for {extracted_file}", "INFO")
-        try:
-            # Dosya türünü belirle (artists, labels, releases, masters)
-            content_type = None
-            row = self.data_df[self.data_df["URL"] == url]
-            if not row.empty:
-                content_type = row.iloc[0]["content"]
-                self.log_to_console(f"Auto Mode: Content type from data_df: {content_type}", "INFO")
-            else:
-                # URL'den içerik türünü çıkarmaya çalış
-                if "artist" in url.lower():
-                    content_type = "artists"
-                elif "label" in url.lower():
-                    content_type = "labels"
-                elif "master" in url.lower():
-                    content_type = "masters"
-                elif "release" in url.lower():
-                    content_type = "releases"
-                else:
-                    self.log_to_console(f"Cannot determine content type for {extracted_file}", "ERROR")
-                    return
-                self.log_to_console(f"Auto Mode: Content type from URL: {content_type}", "INFO")
-            
-            # Dosyanın varlığını kontrol et
-            if not extracted_file.exists():
-                self.log_to_console(f"Auto Mode: File does not exist: {extracted_file}", "ERROR")
-                return
-                
-            self.log_to_console(f"Auto Mode: Chunking XML by type: {extracted_file}", "INFO")
-            
-            # Chunking işlemini başlat
-            try:
-                chunk_xml_by_type(
-                    extracted_file,
-                    content_type=content_type,
-                    records_per_file=10000,
-                    logger=self.log_to_console
-                )
-                self.log_to_console(f"Auto Mode: Chunking completed successfully", "INFO")
-            except Exception as e:
-                self.log_to_console(f"Auto Mode: Error during chunking: {str(e)}", "ERROR")
-                return
-            
-            chunk_folder = extracted_file.parent / f"chunked_{content_type}"
-            if not chunk_folder.exists():
-                self.log_to_console(f"Auto Mode: Chunk folder not created: {chunk_folder}", "ERROR")
-                return
-                
-            combined_csv = extracted_file.with_suffix(".csv")
-            
-            def local_progress_cb(current_step, total_steps):
-                pct = (current_step / total_steps) * 100 if total_steps else 0
-                self.prog_message_var.set(f"Converting: {pct:.1f}%")
-                self.pb["value"] = pct
-                self.update_idletasks()  # UI'ı güncelle
-            
-            self.log_to_console(f"Auto Mode: Converting chunks to CSV: {chunk_folder}", "INFO")
-            
-            # Conversion işlemini başlat
-            try:
-                convert_chunked_files_to_csv(
-                    chunk_folder,
-                    combined_csv,
-                    content_type=content_type,
-                    logger=self.log_to_console,
-                    progress_cb=local_progress_cb
-                )
-                self.log_to_console(f"Auto Mode: Conversion completed successfully", "INFO")
-            except Exception as e:
-                self.log_to_console(f"Auto Mode: Error during conversion: {str(e)}", "ERROR")
-                return
-            
-            # Chunk klasörünü temizle
-            try:
-                if chunk_folder.exists():
-                    shutil.rmtree(chunk_folder, ignore_errors=True)
-                    self.log_to_console(f"Auto Mode: Cleaned up chunk folder", "INFO")
-            except Exception as e:
-                self.log_to_console(f"Auto Mode: Error cleaning up chunk folder: {str(e)}", "WARNING")
-            
-            # Durumu güncelle
-            if combined_csv.exists():
-                self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✔"
-                self.populate_table(self.data_df)
-                self.log_to_console(f"Auto Mode: Successfully created {combined_csv}", "INFO")
-            else:
-                self.log_to_console(f"Auto Mode: CSV file not created: {combined_csv}", "ERROR")
-        except Exception as e:
-            self.log_to_console(f"Auto Mode: Error in convert_single_file: {str(e)}", "ERROR")
-            import traceback
-            self.log_to_console(f"Auto Mode: Traceback: {traceback.format_exc()}", "ERROR")
-
-    def convert_single_file_thread(self, url, folder_name, extracted_file):
-        """
-        Tek bir XML dosyasını CSV'ye dönüştürür.
-        Auto Mode için kullanılır ve ayrı bir thread'de çalışır.
-        """
-        self.log_to_console(f"Auto Mode: Starting convert_single_file_thread for {extracted_file}", "INFO")
-        try:
-            # Dosya türünü belirle (artists, labels, releases, masters)
-            content_type = None
-            row = self.data_df[self.data_df["URL"] == url]
-            if not row.empty:
-                content_type = row.iloc[0]["content"]
-                self.log_to_console(f"Auto Mode: Content type from data_df: {content_type}", "INFO")
-            else:
-                # URL'den içerik türünü çıkarmaya çalış
-                if "artist" in url.lower():
-                    content_type = "artists"
-                elif "label" in url.lower():
-                    content_type = "labels"
-                elif "master" in url.lower():
-                    content_type = "masters"
-                elif "release" in url.lower():
-                    content_type = "releases"
-                else:
-                    self.log_to_console(f"Cannot determine content type for {extracted_file}", "ERROR")
-                    return
-                self.log_to_console(f"Auto Mode: Content type from URL: {content_type}", "INFO")
-            
-            # Dosyanın varlığını kontrol et
-            if not extracted_file.exists():
-                self.log_to_console(f"Auto Mode: File does not exist: {extracted_file}", "ERROR")
-                return
-                
-            self.log_to_console(f"Auto Mode: Chunking XML by type: {extracted_file}", "INFO")
-            
-            # UI güncellemesi için
-            def update_ui(message, progress=None):
-                self.after(0, lambda: self.prog_message_var.set(message))
-                if progress is not None:
-                    self.after(0, lambda: self.pb.configure(value=progress))
-            
-            update_ui("Chunking XML file...")
-            
-            # Chunking işlemini başlat
-            try:
-                chunk_xml_by_type(
-                    extracted_file,
-                    content_type=content_type,
-                    records_per_file=10000,
-                    logger=self.log_to_console
-                )
-                self.log_to_console(f"Auto Mode: Chunking completed successfully", "INFO")
-            except Exception as e:
-                self.log_to_console(f"Auto Mode: Error during chunking: {str(e)}", "ERROR")
-                update_ui("Error during chunking")
-                return
-            
-            chunk_folder = extracted_file.parent / f"chunked_{content_type}"
-            if not chunk_folder.exists():
-                self.log_to_console(f"Auto Mode: Chunk folder not created: {chunk_folder}", "ERROR")
-                update_ui("Chunk folder not created")
-                return
-                
-            combined_csv = extracted_file.with_suffix(".csv")
-            
-            def local_progress_cb(current_step, total_steps):
-                pct = (current_step / total_steps) * 100 if total_steps else 0
-                update_ui(f"Converting: {pct:.1f}%", pct)
-            
-            update_ui("Converting chunks to CSV...")
-            self.log_to_console(f"Auto Mode: Converting chunks to CSV: {chunk_folder}", "INFO")
-            
-            # Conversion işlemini başlat
-            try:
-                convert_chunked_files_to_csv(
-                    chunk_folder,
-                    combined_csv,
-                    content_type=content_type,
-                    logger=self.log_to_console,
-                    progress_cb=local_progress_cb
-                )
-                self.log_to_console(f"Auto Mode: Conversion completed successfully", "INFO")
-            except Exception as e:
-                self.log_to_console(f"Auto Mode: Error during conversion: {str(e)}", "ERROR")
-                update_ui("Error during conversion")
-                return
-            
-            # Chunk klasörünü temizle
-            try:
-                if chunk_folder.exists():
-                    shutil.rmtree(chunk_folder, ignore_errors=True)
-                    self.log_to_console(f"Auto Mode: Cleaned up chunk folder", "INFO")
-            except Exception as e:
-                self.log_to_console(f"Auto Mode: Error cleaning up chunk folder: {str(e)}", "WARNING")
-            
-            # Durumu güncelle
-            if combined_csv.exists():
-                # UI thread'inde güvenli bir şekilde güncelleme yap
-                def update_status():
-                    self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✔"
-                    self.populate_table(self.data_df)
-                    self.prog_message_var.set("Conversion completed")
-                    self.log_to_console(f"Auto Mode: Successfully created {combined_csv}", "INFO")
-                
-                self.after(0, update_status)
-            else:
-                self.log_to_console(f"Auto Mode: CSV file not created: {combined_csv}", "ERROR")
-                update_ui("CSV file not created")
-        except Exception as e:
-            self.log_to_console(f"Auto Mode: Error in convert_single_file_thread: {str(e)}", "ERROR")
-            import traceback
-            self.log_to_console(f"Auto Mode: Traceback: {traceback.format_exc()}", "ERROR")
-            self.after(0, lambda: self.prog_message_var.set("Error in conversion"))
-
     def extract_gz_file_with_progress(self, gz_file_path, completion_callback=None):
-        """Extract a .gz file with progress updates."""
-        self.log_to_console(f"Extracting: {gz_file_path}", "INFO")
-        self.start_status_indicator()  # Start the status indicator
-        
-        # Set start time
-        start_time = datetime.now()
-        self.prog_time_started_var.set(f'Started at: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
-        
-        # Reset progress metrics
-        self.prog_speed_var.set('Speed: 0.00 MB/s')
-        self.prog_time_elapsed_var.set('Elapsed: 0 sec')
-        self.prog_time_left_var.set('Left: 0 sec')
-        
-        output_path = gz_file_path.with_suffix('')
+        """Extract a .gz file with progress updates, ancak hızlı bir şekilde!"""
+        import time
+        import gzip
+        from datetime import datetime
+
+        self.start_status_indicator()
         self.prog_message_var.set('Extracting...')
         self.prog_current_file_var.set(f"File: {gz_file_path.name}")
-        
+
+        output_path = gz_file_path.with_suffix('')
+
         try:
-            # Get file size
-            total_size = gz_file_path.stat().st_size
-            
-            # Open files
-            with gzip.open(gz_file_path, 'rb') as f_in:
-                with open(output_path, 'wb') as f_out:
-                    # Read and write in chunks
-                    chunk_size = 1024 * 1024  # 1MB chunks
-                    extracted_size = 0
-                    
-                    while True:
-                        chunk = f_in.read(chunk_size)
-                        if not chunk:
-                            break
-                        
-                        f_out.write(chunk)
-                        extracted_size += len(chunk)
-                        
-                        # Update progress
-                        if total_size > 0:
-                            percentage = (extracted_size / total_size) * 100
-                            self.pb['value'] = percentage
-                            self.prog_message_var.set(f'Extracting: {percentage:.2f}%')
-                        
-                        # Update speed and time metrics
-                        elapsed = (datetime.now() - start_time).total_seconds()
-                        if elapsed > 0:
-                            speed = (extracted_size / elapsed) / (1024 * 1024)  # MB/s
-                            self.prog_speed_var.set(f"Speed: {speed:.2f} MB/s")
-                            self.prog_time_elapsed_var.set(f"Elapsed: {int(elapsed) // 60} min {int(elapsed) % 60} sec")
-                            
-                            if extracted_size > 0 and total_size > 0:
-                                left = (total_size - extracted_size) / (extracted_size / elapsed)
-                                left_minutes = int(left // 60)
-                                left_seconds = int(left % 60)
-                                self.prog_time_left_var.set(f"Left: {left_minutes} min {left_seconds} sec")
-                        
-                        # Update UI
-                        self.update_idletasks()
-            
-            self.log_to_console(f"Extraction completed: {output_path}", "INFO")
+            # Gz boyutu (sıkıştırılmış)
+            compressed_size = gz_file_path.stat().st_size
+
+            # Başlangıç zamanı
+            start_time = datetime.now()
+            self.prog_time_started_var.set(
+                f'Started at: {start_time.strftime("%Y-%m-%d %H:%M:%S")}'
+            )
+
+            # Toplam dekomprese boyutu bulmaya çalış (bazı .gz'ler desteklemez)
+            with open(gz_file_path, 'rb') as f_in:
+                with gzip.GzipFile(fileobj=f_in) as gz_test:
+                    try:
+                        gz_test.seek(0, 2)  # Dosya sonuna git
+                        total_size = gz_test.tell()  # Dekomprese boyut
+                    except:
+                        # Dekomprese boyutu öğrenemezsek, tahmin olarak 3x al
+                        total_size = compressed_size * 3
+
+            # Okumaya tekrar başlamak için en başa
+            with open(gz_file_path, 'rb') as f_in:
+                with gzip.GzipFile(fileobj=f_in) as gz:
+                    with open(output_path, 'wb') as f_out:
+
+                        # 1 MB chunk (daha da büyütebilirsiniz: 2 MB, 4 MB vb.)
+                        chunk_size = 1024 * 1024
+                        extracted_size = 0
+
+                        # UI güncelleme sıklığı
+                        last_update_time = time.time()
+                        update_interval = 0.5  # yarım saniyede bir
+
+                        while True:
+                            if self.stop_flag:
+                                f_out.close()
+                                output_path.unlink(missing_ok=True)
+                                self.stop_status_indicator()
+                                if completion_callback:
+                                    completion_callback(False)
+                                return
+
+                            chunk = gz.read(chunk_size)
+                            if not chunk:
+                                break
+
+                            f_out.write(chunk)
+                            extracted_size += len(chunk)
+
+                            current_time = time.time()
+                            # Sadece 0.5 sn geçtiyse progress bar güncelle
+                            if (current_time - last_update_time) >= update_interval:
+                                # Yüzde hesapla
+                                if total_size > 0:
+                                    percentage = min((extracted_size / total_size) * 100, 100)
+                                else:
+                                    percentage = 0
+
+                                self.pb['value'] = percentage
+                                self.prog_message_var.set(f'Extracting: {percentage:.1f}%')
+
+                                # Hız ve zaman hesapları
+                                elapsed = (datetime.now() - start_time).total_seconds()
+                                if elapsed > 0:
+                                    speed = (extracted_size / elapsed) / (1024 * 1024)
+                                    self.prog_speed_var.set(f'Speed: {speed:.2f} MB/s')
+                                    self.prog_time_elapsed_var.set(
+                                        f'Elapsed: {int(elapsed) // 60} min {int(elapsed) % 60} sec'
+                                    )
+
+                                    if 0 < percentage < 100:
+                                        # kalan süre
+                                        remain = (total_size - extracted_size) / (extracted_size / elapsed)
+                                        r_min = int(remain // 60)
+                                        r_sec = int(remain % 60)
+                                        self.prog_time_left_var.set(
+                                            f'Left: {r_min} min {r_sec} sec'
+                                        )
+
+                                # Arayüzü güncelle, timer’ı sıfırla
+                                self.update_idletasks()
+                                last_update_time = current_time
+
+            # Döngü bitti, dosya tamamen çıkarıldı
+            # Son durumda %100 yap (ya da percentage tam 100 ise değiştirmeyin)
+            self.pb['value'] = 100
+
+            elapsed = (datetime.now() - start_time).total_seconds()
+            elapsed_str = f'{int(elapsed // 60)} min {int(elapsed % 60)} sec'
+            self.prog_time_elapsed_var.set(f'Elapsed: {elapsed_str}')
+            self.prog_speed_var.set('Speed: N/A')
+            self.prog_time_left_var.set('Left: 0 sec')
+
             self.prog_message_var.set('Extraction completed')
-            
-            # Update data_df
-            url = None
-            for idx, row in self.data_df.iterrows():
-                folder_name = str(row["month"])
-                filename = os.path.basename(row["URL"])
-                file_path = Path(self.download_dir_var.get()) / "Datasets" / folder_name / filename
-                if file_path == gz_file_path:
-                    url = row["URL"]
-                    break
-                
-            if url:
-                self.data_df.loc[self.data_df["URL"] == url, "Extracted"] = "✔"
-                self.populate_table(self.data_df)
-            
-            # Stop the status indicator
+            self.log_to_console(f"Extraction completed: {gz_file_path} → {output_path} in {elapsed_str}", "INFO")
             self.stop_status_indicator()
-            
+
             if completion_callback:
                 completion_callback(True)
-                
+
         except Exception as e:
             self.log_to_console(f"Error extracting {gz_file_path}: {e}", "ERROR")
             self.prog_message_var.set('Extraction failed')
             self.stop_status_indicator()
-            
             if completion_callback:
                 completion_callback(False)
 
-    def download_file_with_progress(self, url, output_path, completion_callback=None):
-        """Download a file with progress updates."""
-        self.log_to_console(f"Downloading: {url}", "INFO")
-        self.start_status_indicator()  # Start the status indicator
-        
-        # Set start time
-        start_time = datetime.now()
-        self.prog_time_started_var.set(f'Started at: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
-        
-        # Reset progress metrics
-        self.prog_speed_var.set('Speed: 0.00 MB/s')
-        self.prog_time_elapsed_var.set('Elapsed: 0 sec')
-        self.prog_time_left_var.set('Left: 0 sec')
-        
-        self.prog_message_var.set('Downloading...')
-        self.prog_current_file_var.set(f"File: {os.path.basename(url)}")
-        
-        try:
-            # Create parent directory if it doesn't exist
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Stream the download with progress updates
-            response = requests.get(url, stream=True)
-            response.raise_for_status()
-            
-            # Get total file size
-            total_size = int(response.headers.get('content-length', 0))
-            
-            # Initialize variables for progress tracking
-            downloaded_size = 0
-            last_update_time = time.time()
-            update_interval = 0.5  # Update UI every 0.5 seconds
-            
-            with open(output_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if self.stop_flag:
-                        self.log_to_console("Download stopped by user", "WARNING")
-                        if completion_callback:
-                            completion_callback(False)
-                        return False
-                    
-                    if chunk:
-                        f.write(chunk)
-                        downloaded_size += len(chunk)
-                        
-                        # Update UI at intervals to avoid too frequent updates
-                        current_time = time.time()
-                        if current_time - last_update_time >= update_interval:
-                            # Update progress bar
-                            if total_size > 0:
-                                percentage = (downloaded_size / total_size) * 100
-                                self.pb['value'] = percentage
-                                self.prog_message_var.set(f'Downloading: {percentage:.2f}%')
-                            
-                            # Update speed and time metrics
-                            elapsed = (datetime.now() - start_time).total_seconds()
-                            if elapsed > 0:
-                                # Calculate speed in MB/s
-                                speed = (downloaded_size / elapsed) / (1024 * 1024)
-                                self.prog_speed_var.set(f"Speed: {speed:.2f} MB/s")
-                                
-                                # Update elapsed time
-                                elapsed_min = int(elapsed) // 60
-                                elapsed_sec = int(elapsed) % 60
-                                self.prog_time_elapsed_var.set(f"Elapsed: {elapsed_min} min {elapsed_sec} sec")
-                                
-                                # Estimate remaining time
-                                if downloaded_size > 0 and total_size > 0:
-                                    left = (total_size - downloaded_size) / (downloaded_size / elapsed)
-                                    left_minutes = int(left // 60)
-                                    left_seconds = int(left % 60)
-                                    self.prog_time_left_var.set(f"Left: {left_minutes} min {left_seconds} sec")
-                            
-                            # Update UI
-                            self.update_idletasks()
-                            last_update_time = current_time
-            
-            self.log_to_console(f"Download completed: {output_path}", "INFO")
-            self.prog_message_var.set('Download completed')
-            
-            # Stop the status indicator
-            self.stop_status_indicator()
-            
-            if completion_callback:
-                completion_callback(True)
-            return True
-            
-        except Exception as e:
-            self.log_to_console(f"Error downloading {url}: {e}", "ERROR")
-            self.prog_message_var.set('Download failed')
-            self.stop_status_indicator()
-            
-            if completion_callback:
-                completion_callback(False)
-            return False
 
 
 def main():
