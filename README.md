@@ -4,19 +4,21 @@
   <img src="assets/logo.png" alt="Discogs Data Processor Logo" width="200"/>
 </p>
 
-A powerful desktop application for efficiently managing Discogs data dumps. Download, extract, and convert Discogs datasets to CSV format with an intuitive user interface.
+A powerful desktop application for efficiently managing Discogs data dumps. Download, extract, convert to CSV, and create custom cover arts via a modern interface.
 
 ## ✨ Key Features
 
-- 🚀 **Multi-threaded Downloads**: Utilizes 8 parallel threads for faster downloads
-- 📦 **Smart Extraction**: Automatic .gz file extraction with progress tracking
-- 🔄 **Efficient Conversion**: Streams XML to CSV with memory-efficient processing
-- 📊 **Real-time Progress**: Live tracking of all operations with speed and time estimates
-- 🎨 **Modern UI**: Clean, dark-themed interface with intuitive controls
-- 📝 **Detailed Logging**: Comprehensive logging system with color-coded messages
-- 💾 **Flexible Storage**: Customizable download location and organized file structure
+- 🚀 Multi-threaded Downloads (8 threads)
+- 📦 Smart `.gz` Extraction
+- 🔄 Efficient XML → CSV conversion
+- 📊 Real-time Progress (speed, ETA)
+- 🎨 Dark Themed Modern UI
+- 📝 Detailed Logging (color-coded)
+- 💾 Custom Download Location
+- 🖼️ Cover Art Generator
+- ⚙️ Auto Mode (Download → Extract → Convert)
 
-## 🖼️ Application Preview
+## 🖼️ Preview
 
 <p align="center">
   <img src="img/UI.gif" alt="Application Interface"/>
@@ -25,69 +27,40 @@ A powerful desktop application for efficiently managing Discogs data dumps. Down
 ## 🚀 Getting Started
 
 ### Prerequisites
-
-- Python 3.7 or higher
-- Required Python packages:
-```python
-ttkbootstrap
-pandas
-requests
-```
+- Python 3.7+
+- `ttkbootstrap`, `pandas`, `requests`
 
 ### Installation
 
-1. Clone the repository:
 ```bash
 git clone https://github.com/ofurkancoban/discogs-data-processor.git
 cd discogs-data-processor
-```
-
-2. Install required packages:
-```bash
 pip install -r requirements.txt
-```
-
-3. Run the application:
-```bash
 python main.py
 ```
 
 ## 📖 How to Use
 
-### Initial Setup
-1. Launch the application
-2. Click the Settings button to set your preferred download folder
-   - Default: `~/Downloads/Discogs`
-   - A Discogs folder will be automatically created
+### Setup
+- Click **Settings** to choose a download folder (default: `~/Downloads/Discogs`)
 
-### Basic Operations
+### Main Operations
 
-#### 1️⃣ Fetching Data
-- Data is automatically fetched on startup
-- Use "Fetch Data" button for manual updates
-- View available Discogs datasets in the main table
+1️⃣ **Fetch Data**: auto on startup or use **Fetch**  
+2️⃣ **Download**: select files & click **Download**  
+3️⃣ **Extract**: convert `.gz` to `.xml`  
+4️⃣ **Convert**: convert `.xml` to `.csv`  
+5️⃣ **Cover Art**: image + year/month → output  
+6️⃣ **Manage Files**: delete, status, disk size
 
-#### 2️⃣ Downloading Files
-- Select desired files using checkboxes
-- Click "Download" to start multi-threaded download
-- Monitor progress with real-time speed and time estimates
+### ⚙️ Auto Mode
 
-#### 3️⃣ Extracting Files
-- Select downloaded files (.gz)
-- Click "Extract" to convert to XML format
-- Progress bar shows extraction status
+- Enable **Auto Mode**  
+- Select rows → click **Download**  
+- Automatically runs: Download → Extract → Convert  
+- Perfect for batch automation!
 
-#### 4️⃣ Converting to CSV
-- Select extracted files (.xml)
-- Click "Convert" for CSV conversion
-- Uses streaming for memory efficiency
-
-#### 5️⃣ Managing Files
-- Delete unwanted files with "Delete" button
-- View file status with ✔/✖ indicators
-- Track total downloaded size
-
-## 📁 File Organization
+## 📁 Folder Structure
 
 ```
 Discogs/
@@ -123,16 +96,11 @@ Discogs/
 - Both UI and file logging
 - Detailed operation tracking
 
-## 🛠️ Development
+## 🛠️ Tech Stack
 
-### Built With
 - Python 3.7+
-- ttkbootstrap for UI
-- pandas for data processing
-- requests for downloads
-
-### Contributing
-Contributions are welcome! Please feel free to submit a Pull Request.
+- `ttkbootstrap` (UI)
+- `pandas`, `requests`
 
 ## 👤 Author
 
@@ -141,20 +109,18 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 - GitHub: [ofurkancoban](https://github.com/ofurkancoban)
 - Kaggle: [ofurkancoban](https://www.kaggle.com/ofurkancoban)
 
-## 🙏 Acknowledgments
 
-- [Discogs](https://www.discogs.com/) for providing data dumps
-- [ttkbootstrap](https://ttkbootstrap.readthedocs.io/) for UI components
-- [Icons8](https://icons8.com/) for application icons
+## 🙏 Thanks To
+
+- Discogs (Data dumps)  
+- ttkbootstrap (UI framework)  
+- Icons8 (Icons)
 
 ## 📞 Support
 
-If you encounter any issues or have questions:
-1. Check the detailed logs in the application
-2. Open an issue on GitHub
-3. Contact through LinkedIn
-
----
+- Check logs inside the app  
+- Open an issue on GitHub  
+- Reach out on LinkedIn
 
 <p align="center">
   Made with ❤️ by ofurkancoban
