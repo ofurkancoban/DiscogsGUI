@@ -440,6 +440,7 @@ class CollapsingFrame(ttk.Frame):
         self.columnconfigure(0, weight=1)
         self.cumulative_rows = 0
 
+
     def add(self, child, title="", bootstyle=PRIMARY, **kwargs):
         if child.winfo_class() != 'TFrame':
             return
@@ -627,7 +628,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         #######################################################################
         # LEFT PANEL
         #######################################################################
-        left_panel = ttk.Frame(self, style='bg.TFrame', width=250)
+        left_panel = ttk.Frame(self, style='bg.TFrame', width=280)
         left_panel.pack(side=LEFT, fill=BOTH, expand=True)
         left_panel.pack_propagate(False)
 
@@ -710,22 +711,22 @@ class DiscogsDataProcessorUI(ttk.Frame):
         lbl.grid(row=3, column=0, columnspan=2, sticky=EW, pady=2)
         self.prog_time_started_var.set('Not started')
 
-        lbl = ttk.Label(status_frm, textvariable=self.prog_speed_var, padding=(10, 0))
-        lbl.grid(row=4, column=0, columnspan=2, sticky=EW, pady=2)
+        self.speed_label = ttk.Label(status_frm, textvariable=self.prog_speed_var, padding=(10, 0))
+        self.speed_label.grid(row=4, column=0, columnspan=2, sticky=EW, pady=2)
         self.prog_speed_var.set('Speed: 0.00 MB/s')
 
         lbl = ttk.Label(status_frm, textvariable=self.prog_time_elapsed_var, padding=(10, 0))
         lbl.grid(row=5, column=0, columnspan=2, sticky=EW, pady=2)
         self.prog_time_elapsed_var.set('Elapsed: 0 sec')
 
-        lbl = ttk.Label(status_frm, textvariable=self.prog_time_left_var, padding=(10, 0))
-        lbl.grid(row=6, column=0, columnspan=2, sticky=EW, pady=2)
+        self.left_label = ttk.Label(status_frm, textvariable=self.prog_time_left_var, padding=(10, 0))
+        self.left_label.grid(row=6, column=0, columnspan=2, sticky=EW, pady=2)
         self.prog_time_left_var.set('Left: 0 sec')
 
         stop_btn = ttk.Button(status_frm, command=self.stop_download, image='stop', text='Stop', compound=LEFT)
         stop_btn.grid(row=7, column=0, columnspan=2, sticky=EW)
 
-        lbl_ver = ttk.Label(left_panel, text="v.1.3", style='bg.TLabel')
+        lbl_ver = ttk.Label(left_panel, text="v.1.5", style='bg.TLabel')
         lbl_ver.pack(side='bottom', anchor='center', pady=2)
         lbl_name = ttk.Label(left_panel, text="ofurkancoban", style='bg.TLabel')
         lbl_name.pack(side='bottom', anchor='center', pady=2)
@@ -822,11 +823,19 @@ class DiscogsDataProcessorUI(ttk.Frame):
         # Start scraping after short delay
         self.after(100, self.start_scraping)
         self.update_downloaded_size()
-
+        self.hide_speed_and_left()
     # -------------------------------------------------------------------------
     # NEW FUNCTION: OPEN COVERART WINDOW
     # -------------------------------------------------------------------------
+    def show_speed_and_left(self):
+        """Show speed and left labels during download."""
+        self.speed_label.grid()
+        self.left_label.grid()
 
+    def hide_speed_and_left(self):
+        """Hide speed and left labels during extract/convert."""
+        self.speed_label.grid_remove()
+        self.left_label.grid_remove()
     def on_year_change(self, event):
         selected_year = self.scrape_year_var.get()
         self.log_to_console(f"Selected year: {selected_year}", "INFO")
@@ -1188,6 +1197,11 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 self.after(0, self.prog_time_left_var.set, f"Left: {left_minutes} min {left_seconds} sec")
                 self.after(0, self.prog_message_var.set, f"Downloading: {percentage:.2f}%")
 
+    def update_elapsed_timer(self):
+        if self.auto_mode_start_time:
+            elapsed = (datetime.now() - self.auto_mode_start_time).total_seconds()
+            self.prog_time_elapsed_var.set(f"Elapsed: {int(elapsed) // 60} min {int(elapsed) % 60} sec")
+            self.after(1000, self.update_elapsed_timer)
     def open_settings(self):
         """Allows the user to select a download folder and creates a Discogs folder.
            Then automatically starts the Fetch Data process."""
@@ -1791,6 +1805,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         return True
 
     def download_file(self, url, filename, folder_name):
+        self.show_speed_and_left()
         self.start_status_indicator()
         file_path = None
         try:
@@ -1818,6 +1833,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                     downloads_dir = Path(self.download_dir_var.get()) / "Datasets"
                     file_path = downloads_dir / folder_name / filename
                     self.log_to_console(f"{filename} successfully downloaded: {file_path}", "INFO")
+                    self.hide_speed_and_left()
                     self.data_df.loc[self.data_df["URL"] == url, "Downloaded"] = "✔"
                     self.data_df.loc[self.data_df["URL"] == url, "Extracted"] = "✖"
                     self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✖"
@@ -2020,6 +2036,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
             "info"
         )
 
+        self.auto_mode_start_time = None
     def download_selected(self):
         checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
         if not checked_items:
@@ -2056,11 +2073,14 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
         # ─── AUTO MODE İŞLEMLERİNİ YÖNETEN YENİ METOD ─────────────────
     def auto_mode_process(self, checked_items):
+
             """
             Auto Mode aktifken; seçili dosyalar için download, extract, chunking ve convert işlemlerini
             sırasıyla gerçekleştiren zincirleme işlemi yapar. Her adımın tamamlanmasını bekler ve
             tüm işlemler bittikten sonra bir popup ile kullanıcı bilgilendirilir.
             """
+            self.auto_mode_start_time = datetime.now()
+            self.update_elapsed_timer()
             # Seçili dosyalardan URL listesini elde edelim ve download işlemini başlatalım.
             urls = []
             for item in checked_items:
@@ -2131,6 +2151,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
             self.after(0,
                        lambda: self.show_centered_popup("Auto Mode", "All operations completed successfully!", "info"))
 
+            self.auto_mode_start_time = None
     def extract_gz_file_with_progress(self, file_path: Path, callback):
         """
         Verilen .gz dosyasını çıkartır ve ilerleme durumunu UI’ye yansıtır.
@@ -2166,6 +2187,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 progress_queue.put(('done', None))
             except Exception as e:
                 progress_queue.put(('error', str(e)))
+
 
         def update_progress():
             try:
@@ -2712,8 +2734,8 @@ def main():
     ui = DiscogsDataProcessorUI(app, empty_df)
     ui.pack(fill=BOTH, expand=True)
 
-    window_width = 770
-    window_height = 770
+    window_width = 820
+    window_height = 820
 
     screen_width = app.winfo_screenwidth()
     screen_height = app.winfo_screenheight()
