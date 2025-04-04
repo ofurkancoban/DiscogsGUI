@@ -732,11 +732,23 @@ class DiscogsDataProcessorUI(ttk.Frame):
         lbl_name.pack(side='bottom', anchor='center', pady=2)
 
         # Add avatar at the bottom (if exists)
+        import webbrowser
+
         if 'avatar' in self.photoimages:
             lbl = ttk.Label(left_panel, image='avatar', style='bg.TLabel')
         else:
             lbl = ttk.Label(left_panel, text="Avatar", style='bg.TLabel')
+
         lbl.pack(side='bottom', anchor='center', pady=2)
+
+        def open_mail(event):
+            email_address = "ofurkancoban@gmail.com"
+            subject = "Discogs Data Processor - Question"
+            body = "Hello ofurkancoban, "
+            mailto_link = f"mailto:{email_address}?subject={subject}&body={body}"
+            webbrowser.open_new(mailto_link)
+
+        lbl.bind("<Button-1>", open_mail)
 
         #######################################################################
         # RIGHT PANEL
@@ -1258,48 +1270,71 @@ class DiscogsDataProcessorUI(ttk.Frame):
         text_area.tag_configure("bullet", font=("Arial", 12), lmargin1=25, lmargin2=50)
 
         # Information text
+
         info_text = [
             ("Discogs Data Processor User Guide\n", "heading"),
             ("\nIntroduction\n", "subheading"),
             (
-            "This application helps you automatically download, extract, and convert Discogs datasets to CSV format. With its user-friendly interface, you can easily manage the processes.\n",
+            "This application helps you automatically download, extract, and convert Discogs datasets to CSV format. It includes advanced features such as multi-threaded downloads, auto-mode processing, and cover art creation.\n",
             "normal"),
             ("\nGetting Started\n", "subheading"),
             ("1. Download Folder Selection:\n", "normal"),
             ("   - Click the Settings button to select your download folder.\n", "bullet"),
-            ("   - An automatic Discogs folder is created in the selected folder.\n", "bullet"),
+            ("   - An automatic Discogs folder is created in the selected location.\n", "bullet"),
             ("   - By default, the ~/Downloads/Discogs folder is used.\n", "bullet"),
             ("\n2. Fetch Data:\n", "subheading"),
-            ("   - When the application first opens, it automatically fetches the latest data.\n", "bullet"),
+            ("   - The application automatically fetches the latest data when opened.\n", "bullet"),
             ("   - You can also manually fetch data by clicking the Fetch Data button.\n", "bullet"),
             ("\nButton Functions\n", "subheading"),
             ("- Fetch Data: Fetches the latest datasets from Discogs S3.\n", "bullet"),
-            ("- Download: Downloads the selected datasets.\n", "bullet"),
+            ("- Download: Downloads the selected datasets using multi-threading for faster performance.\n", "bullet"),
             ("- Extract: Extracts the downloaded .gz files to .xml format.\n", "bullet"),
-            ("- Convert: Converts the .xml files to CSV.\n", "bullet"),
-            ("- Delete: Deletes the selected files.\n", "bullet"),
-            ("- Settings: Opens folder selection dialog.\n", "bullet"),
-            ("- Info: Shows this user guide.\n", "bullet"),
-            ("- Create Cover Art: Allows you to pick an image, a year/month, and place text.\n", "bullet"),
+            ("- Convert: Converts extracted .xml files to CSV format.\n", "bullet"),
+            ("- Delete: Deletes selected datasets and associated files.\n", "bullet"),
+            ("- Settings: Opens the folder selection dialog.\n", "bullet"),
+            ("- Info: Displays this user guide.\n", "bullet"),
+            ("- Create Cover Art: Allows you to select an image, specify a year/month, and generate cover art.\n",
+             "bullet"),
+            ("\nAdvanced Features\n", "subheading"),
+            ("- Multi-threaded Downloads:\n", "bullet"),
+            ("   Files are downloaded faster using multiple threads.\n", "bullet"),
+            ("- Resume Support:\n", "bullet"),
+            ("   Downloads automatically resume after connection interruptions.\n", "bullet"),
+            ("- Auto Mode:\n", "bullet"),
+            ("   Automatically chains Download → Extract → Convert processes for selected datasets.\n", "bullet"),
+            ("- Cover Art Creation:\n", "bullet"),
+            (
+            "   Adds customizable year and month text to selected images for easy dataset identification.\n", "bullet"),
             ("\nUsage Steps\n", "subheading"),
             ("1. Setting the Download Folder:\n", "normal"),
             ("   - Click the Settings button.\n", "bullet"),
-            ("   - Select a folder and the Discogs subfolder will be created.\n", "bullet"),
+            ("   - Select a folder to create the Discogs subfolder.\n", "bullet"),
             ("\n2. Downloading Data:\n", "subheading"),
-            ("   - Fetch data (automatically or via button).\n", "bullet"),
-            ("   - Select rows in the table and press Download.\n", "bullet"),
+            ("   - Fetch data automatically or via the Fetch Data button.\n", "bullet"),
+            ("   - Select datasets in the table and click Download.\n", "bullet"),
             ("\n3. Extracting Data:\n", "subheading"),
-            ("   - Select .gz files you downloaded and click Extract.\n", "bullet"),
+            ("   - Select downloaded .gz files and click Extract.\n", "bullet"),
             ("\n4. Converting Data:\n", "subheading"),
-            ("   - Select .xml files and click Convert.\n", "bullet"),
+            ("   - Select extracted .xml files and click Convert.\n", "bullet"),
             ("\n5. Deleting Files:\n", "subheading"),
-            ("   - Select files and click Delete to remove them.\n", "bullet"),
+            ("   - Select files and click Delete to remove them permanently.\n", "bullet"),
+            ("\n6. Creating Cover Art:\n", "subheading"),
+            ("   - Click Create Cover Art.\n", "bullet"),
+            ("   - Choose an image, year, month, and optional font.\n", "bullet"),
+            ("   - Click Apply to generate and save the cover art image.\n", "bullet"),
             ("\nStatus Tracking\n", "subheading"),
-            ("- Progress bar, speed, time metrics, etc.\n", "bullet"),
+            (
+            "- Progress bar, download speed, elapsed time, and remaining time indicators keep you informed during operations.\n",
+            "bullet"),
+            ("- File statuses (Downloaded, Extracted, Processed) are clearly displayed in the dataset table.\n",
+             "bullet"),
             ("\nSupport\n", "subheading"),
-            ("- For issues, check the log or contact the developer via top-right icons.\n", "bullet"),
+            (
+            "- For troubleshooting, view logs in the console area or check the discogs_data.log file in your download folder.\n",
+            "bullet"),
+            ("- For further assistance, contact the developer via provided links.\n", "bullet"),
             ("\nThank You!\n", "subheading"),
-            ("Happy working with the Discogs Data Processor!\n", "bullet")
+            ("- ofurkancoban\n", "bullet")
         ]
 
         # Insert text with tags
