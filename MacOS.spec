@@ -38,12 +38,12 @@ exe = EXE(
     codesign_identity=None,
 
     entitlements_file=None,
-    icon=['assets/app_icon.png'],
+    icon='assets/app_icon.icns',
 )
 app = BUNDLE(
     exe,
     name='Discogs Data Processor.app',
-    icon='assets/app_icon.ico',
+    icon='assets/app_icon.icns',
     bundle_identifier='com.ofurkancoban.DDP',
     info_plist={
         'LSUIElement': False,  # Uygulamanın Dock'ta görünmesini sağlar

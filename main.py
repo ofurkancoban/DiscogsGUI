@@ -1,11 +1,13 @@
 import gzip
 import sys
+import tkinter as tk
 import shutil  # <-- I use shutil.rmtree() to remove chunk folders
 import requests
 import platform
 import subprocess
 import pandas as pd
 import xml.etree.ElementTree as ET
+import threading
 from threading import Thread, Lock
 import webbrowser  # <-- for opening social media links
 import csv
@@ -24,6 +26,7 @@ from pathlib import Path
 from tkinter import messagebox
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from tkinter import filedialog, StringVar, messagebox, BooleanVar
+import urllib.parse
 ###############################################################################
 #                              XML → DataFrame logic
 ###############################################################################
@@ -370,46 +373,42 @@ def get_month_from_key(key):
     dt = extract_date_from_key(key)
     return dt.strftime("%Y-%m") if dt else ""
 
-def list_directories_from_s3(base_url="https://discogs-data-dumps.s3.us-west-2.amazonaws.com/", prefix="data/"):
-    """Retrieve a list of 'directories' (common prefixes) from the S3 XML listing."""
-    import xml.etree.ElementTree as ET
-
-    url = base_url + "?prefix=" + prefix + "&delimiter=/"
+def list_directories_from_s3(base_url="https://data.discogs.com/", prefix="data/"):
+    """Retrieve a list of 'directories' (common prefixes) from the HTML listing."""
+    url = base_url + "?prefix=" + prefix
     r = requests.get(url)
     r.raise_for_status()
-    ns = "{http://s3.amazonaws.com/doc/2006-03-01/}"
-    root = ET.fromstring(r.text)
+
+    # Find links like ?prefix=data%2F2025%2F
     dirs = []
-    for cp in root.findall(ns + 'CommonPrefixes'):
-        p = cp.find(ns + 'Prefix').text
-        dirs.append(p)
-    return dirs
+    matches = re.findall(r'href="\?prefix=([^"]+)"', r.text)
+    for m in matches:
+        decoded_prefix = urllib.parse.unquote(m)
+        if decoded_prefix.startswith(prefix) and decoded_prefix != prefix:
+            if decoded_prefix not in dirs:
+                dirs.append(decoded_prefix)
+    return sorted(dirs)
 
 
 def list_files_in_directory(base_url, directory_prefix):
-    """List all files (key, size, last_modified) in a particular S3 directory prefix."""
-    import xml.etree.ElementTree as ET
-
+    """List all files (key, size, last_modified) in a particular directory prefix."""
     url = base_url + "?prefix=" + directory_prefix
     r = requests.get(url)
     r.raise_for_status()
-    ns = "{http://s3.amazonaws.com/doc/2006-03-01/}"
-    root = ET.fromstring(r.text)
+
+    # Pattern example: 2026-01-15 16:42:07             418.0 MB       <a href="?download=data%2F2025%2Fdiscogs_20250101_artists.xml.gz">discogs_20250101_artists.xml.gz</a>
+    pattern = r'(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})\s+([\d\.]+\s+[KMG]?B)\s+<a href="\?download=([^"]+)">([^<]+)</a>'
+    matches = re.findall(pattern, r.text)
 
     data = []
-    for content in root.findall(ns + 'Contents'):
-        key = content.find(ns + 'Key').text
-        size_str = content.find(ns + 'Size').text
-        last_modified = content.find(ns + 'LastModified').text
-
-        try:
-            size_bytes = int(size_str)
-            size_hr = human_readable_size(size_bytes)
-        except:
-            size_hr = "0 B"
+    for m in matches:
+        last_modified = m[0]
+        size_hr = m[1]
+        key = urllib.parse.unquote(m[2])
+        filename = m[3]
 
         ctype = "unknown"
-        lname = key.lower()
+        lname = filename.lower()
         if "checksum" in lname:
             ctype = "checksum"
         elif "artist" in lname:
@@ -426,7 +425,7 @@ def list_files_in_directory(base_url, directory_prefix):
             "size": size_hr,
             "key": key,
             "content": ctype,
-            "URL": base_url + key
+            "URL": base_url + "?download=" + m[2] # Use the encoded key from the link
         })
 
     return pd.DataFrame(data)
@@ -490,22 +489,22 @@ class DiscogsDataProcessorUI(ttk.Frame):
         # 1) Load all images in a dictionary + self.photoimages
         #######################################################################
         image_files = {
-            'settings': 'icons8-settings-30.png',
-            'info': 'icons8-info-30.png',
-            'download': 'icons8-download-30.png',
-            'stop': 'icons8-cancel-30.png',
-            'refresh': 'icons8-refresh-30.png',
-            'opened-folder': 'icons8-folder-30.png',
-            'fetch': 'icons8-data-transfer-30.png',
-            'delete': 'icons8-trash-30.png',
-            'extract': 'icons8-open-archive-30.png',
-            'convert': 'icons8-export-csv-30.png',
-            'coverart': 'icons8-image-30.png',
-            'logo': 'logo.png',
-            'linkedin': 'linkedin.png',
-            'github': 'github.png',
-            'kaggle': 'kaggle.png',
-            'avatar': 'avatar.png'
+            'v_icon_settings': 'icons8-settings-30.png',
+            'v_icon_info': 'icons8-info-30.png',
+            'v_icon_download': 'icons8-download-30.png',
+            'v_icon_stop': 'icons8-cancel-30.png',
+            'v_icon_refresh': 'icons8-refresh-30.png',
+            'v_icon_folder': 'icons8-folder-30.png',
+            'v_icon_fetch': 'icons8-data-transfer-30.png',
+            'v_icon_delete': 'icons8-trash-30.png',
+            'v_icon_extract': 'icons8-open-archive-30.png',
+            'v_icon_convert': 'icons8-export-csv-30.png',
+            'v_icon_coverart': 'icons8-image-30.png',
+            'v_icon_logo': 'logo.png',
+            'v_icon_linkedin': 'linkedin.png',
+            'v_icon_github': 'github.png',
+            'v_icon_kaggle': 'kaggle.png',
+            'v_icon_avatar': 'avatar.png'
         }
 
         self.photoimages = {}
@@ -527,8 +526,8 @@ class DiscogsDataProcessorUI(ttk.Frame):
         top_banner_frame.pack(side=TOP, fill=X)
 
         # [UPDATED] Discogs logo on the left with click event
-        if 'logo' in self.photoimages:
-            banner = ttk.Label(top_banner_frame, image='logo')
+        if 'v_icon_logo' in self.photoimages:
+            banner = ttk.Label(top_banner_frame, image='v_icon_logo')
             banner.pack(side=LEFT, padx=10, pady=5)
             # Open discogs.com on click
             banner.bind("<Button-1>", lambda e: self.open_url("https://www.discogs.com"))
@@ -540,31 +539,16 @@ class DiscogsDataProcessorUI(ttk.Frame):
         social_frame = ttk.Frame(top_banner_frame)
         social_frame.pack(side=RIGHT, padx=10, pady=5)
 
-        if 'linkedin' in self.photoimages:
-            btn_linkedin = ttk.Button(
-                social_frame,
-                image='linkedin',
-                bootstyle=LINK,
-                command=lambda: self.open_url("https://www.linkedin.com/in/ofurkancoban/")
-            )
+        if 'v_icon_linkedin' in self.photoimages:
+            btn_linkedin = ttk.Button(social_frame, image='v_icon_linkedin', bootstyle=LINK, command=lambda: self.open_url("https://www.linkedin.com/in/ofurkancoban/"))
             btn_linkedin.pack(side=LEFT, padx=2)
 
-        if 'github' in self.photoimages:
-            btn_github = ttk.Button(
-                social_frame,
-                image='github',
-                bootstyle=LINK,
-                command=lambda: self.open_url("https://github.com/ofurkancoban")
-            )
+        if 'v_icon_github' in self.photoimages:
+            btn_github = ttk.Button(social_frame, image='v_icon_github', bootstyle=LINK, command=lambda: self.open_url("https://github.com/ofurkancoban"))
             btn_github.pack(side=LEFT, padx=2)
 
-        if 'kaggle' in self.photoimages:
-            btn_kaggle = ttk.Button(
-                social_frame,
-                image='kaggle',
-                bootstyle=LINK,
-                command=lambda: self.open_url("https://www.kaggle.com/ofurkancoban")
-            )
+        if 'v_icon_kaggle' in self.photoimages:
+            btn_kaggle = ttk.Button(social_frame, image='v_icon_kaggle', bootstyle=LINK, command=lambda: self.open_url("https://www.kaggle.com/ofurkancoban"))
             btn_kaggle.pack(side=LEFT, padx=2)
 
         #######################################################################
@@ -575,30 +559,30 @@ class DiscogsDataProcessorUI(ttk.Frame):
         self.scroll_message_var.set('Log: Ready.')
 
         # 1. Fetch Data
-        btn = ttk.Button(buttonbar, text='Fetch Data', image='fetch', compound=TOP, command=self.start_scraping)
+        btn = ttk.Button(buttonbar, text='Fetch Data', image='v_icon_fetch', compound=TOP, command=self.start_scraping)
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
         # 3. Download
-        btn = ttk.Button(buttonbar, text='Download', image='download', compound=TOP, command=self.download_selected)
+        btn = ttk.Button(buttonbar, text='Download', image='v_icon_download', compound=TOP, command=self.download_selected)
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
         # 4. Extract
-        btn = ttk.Button(buttonbar, text='Extract', image='extract', compound=TOP, command=self.extract_selected)
+        btn = ttk.Button(buttonbar, text='Extract', image='v_icon_extract', compound=TOP, command=self.extract_selected)
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
         # 5. Convert
-        btn = ttk.Button(buttonbar, text='Convert', image='convert', compound=TOP, command=self.convert_selected)
+        btn = ttk.Button(buttonbar, text='Convert', image='v_icon_convert', compound=TOP, command=self.convert_selected)
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
         # 6. Delete
-        btn = ttk.Button(buttonbar, text='Delete', image='delete', compound=TOP, command=self.delete_selected)
+        btn = ttk.Button(buttonbar, text='Delete', image='v_icon_delete', compound=TOP, command=self.delete_selected)
         btn.pack(side=LEFT, ipadx=1, ipady=5, padx=1, pady=1)
 
         btn = ttk.Button(
             buttonbar,
             text='Cover Art',
             # you could pick an icon from your assets if desired, e.g. 'info' or 'settings'
-            image='coverart',
+            image='v_icon_coverart',
             compound=TOP,
             command=self.open_coverart_window  # <--- We'll define this below
         )
@@ -608,7 +592,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         btn = ttk.Button(
             buttonbar,
             text='Settings',
-            image='settings',
+            image='v_icon_settings',
             compound=TOP,
             command=self.open_settings  # Settings window
         )
@@ -619,7 +603,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         btn = ttk.Button(
             buttonbar,
             text='Info',
-            image='info',
+            image='v_icon_info',
             compound=TOP,
             command=self.open_info
         )
@@ -655,7 +639,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
         _func = self.open_discogs_folder
         open_btn = ttk.Button(ds_frm, text='Open Folder', command=_func,
-                              image='opened-folder', compound=LEFT)
+                              image='v_icon_folder', compound=LEFT)
         open_btn.grid(row=5, column=0, columnspan=2, sticky=EW)
 
         # UI başlatılırken __init__ metodunda, örneğin sol panelin altına ekleyebilirsiniz:
@@ -723,7 +707,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         self.left_label.grid(row=6, column=0, columnspan=2, sticky=EW, pady=2)
         self.prog_time_left_var.set('Left: 0 sec')
 
-        stop_btn = ttk.Button(status_frm, command=self.stop_download, image='stop', text='Stop', compound=LEFT)
+        stop_btn = ttk.Button(status_frm, command=self.stop_download, image='v_icon_stop', text='Stop', compound=LEFT)
         stop_btn.grid(row=7, column=0, columnspan=2, sticky=EW)
 
         lbl_ver = ttk.Label(left_panel, text="v.1.5", style='bg.TLabel')
@@ -734,8 +718,8 @@ class DiscogsDataProcessorUI(ttk.Frame):
         # Add avatar at the bottom (if exists)
         import webbrowser
 
-        if 'avatar' in self.photoimages:
-            lbl = ttk.Label(left_panel, image='avatar', style='bg.TLabel')
+        if 'v_icon_avatar' in self.photoimages:
+            lbl = ttk.Label(left_panel, image='v_icon_avatar', style='bg.TLabel')
         else:
             lbl = ttk.Label(left_panel, text="Avatar", style='bg.TLabel')
 
@@ -859,7 +843,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         S3'te belirtilen prefix (ör: "data/2021/") ile ilgili dosyaları listeler,
         data_df'yi günceller ve tabloyu yeniden populate eder.
         """
-        base_url = "https://discogs-data-dumps.s3.us-west-2.amazonaws.com/"
+        base_url = "https://data.discogs.com/"
         try:
             # list_files_in_directory fonksiyonu S3'dan dosya bilgilerini getiriyor:
             data_df = list_files_in_directory(base_url, directory_prefix)
@@ -1259,7 +1243,7 @@ class DiscogsDataProcessorUI(ttk.Frame):
         info_window.grab_set()
 
         # Plain Text widget (no scrollbar)
-        text_area = ttk.Text(info_window, wrap='word', font=("Arial", 12), height=30)
+        text_area = tk.Text(info_window, wrap='word', font=("Arial", 12), height=30)
         text_area.pack(fill=BOTH, expand=True, padx=10, pady=10)
         text_area.config(state='normal')
 
@@ -1354,9 +1338,9 @@ class DiscogsDataProcessorUI(ttk.Frame):
     # _scrape_data_s3 fonksiyonundaki ilgili kısım:
     def _scrape_data_s3(self):
         try:
-            base_url = "https://discogs-data-dumps.s3.us-west-2.amazonaws.com/"
+            base_url = "https://data.discogs.com/"
             prefix = "data/"
-            self.log_to_console("Listing directories from S3...", "INFO")
+            self.log_to_console("Listing directories from data.discogs.com...", "INFO")
             dirs = list_directories_from_s3(base_url, prefix)
             if not dirs:
                 self.log_to_console("No directories found.", "WARNING")
@@ -1397,6 +1381,9 @@ class DiscogsDataProcessorUI(ttk.Frame):
             self.log_to_console(f"Error: {e}", "ERROR")
 
     def populate_table(self, data_df):
+        if threading.current_thread() is not threading.main_thread():
+            self.after(0, self.populate_table, data_df)
+            return
         """Populates the table with updated data."""
         for cb in self.checkbuttons.values():
             cb.destroy()
@@ -1511,8 +1498,9 @@ class DiscogsDataProcessorUI(ttk.Frame):
 
             if not row_data.empty:
                 url = row_data["URL"].values[0]
+                key = row_data["key"].values[0]
                 folder_name = row_data["month"].values[0]
-                filename = os.path.basename(url)
+                filename = os.path.basename(key)
                 base_path = Path(self.download_dir_var.get()) / "Datasets" / folder_name / filename
 
                 # Get the base name without any extensions
@@ -1583,8 +1571,12 @@ class DiscogsDataProcessorUI(ttk.Frame):
     def log_to_console(self, message, message_type="INFO"):
         """
         Logs a message to the console_text widget and saves it to a log file.
-        Every other line alternates between white and light blue.
+        Uses self.after to ensure thread-safety if called from background threads.
         """
+        if threading.current_thread() is not threading.main_thread():
+            self.after(0, self.log_to_console, message, message_type)
+            return
+
         self.console_text.config(state='normal')
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         formatted_message = f"→ [{timestamp}] [{message_type.upper()}]: {message}\n"
@@ -1872,16 +1864,12 @@ class DiscogsDataProcessorUI(ttk.Frame):
                     self.data_df.loc[self.data_df["URL"] == url, "Downloaded"] = "✔"
                     self.data_df.loc[self.data_df["URL"] == url, "Extracted"] = "✖"
                     self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✖"
+                    # Update UI and downloaded size
                     self.populate_table(self.data_df)
                     self.update_downloaded_size()
 
-                    # 🔥 AUTO MODE İÇİN BURADA YAPILAN DÜZELTME 🔥
-                    if self.auto_mode_var.get():
-                        # Sadece indirilen dosyayı extract etmek için:
-                        self.after(1000, lambda: self.extract_selected_after_download(file_path))
-
-                    # Eğer Auto Mode kapalı ise eski popup devam eder.
-                    else:
+                    # In Manual Mode, show success popup
+                    if not self.auto_mode_var.get():
                         self.after(0, lambda: self.show_centered_popup(
                             "Download Completed",
                             f"{filename} successfully downloaded",
@@ -1950,6 +1938,13 @@ class DiscogsDataProcessorUI(ttk.Frame):
     def single_thread_download(self, url, filename, folder_name):
         """Single-threaded download implementation."""
         self.log_to_console("Switching to single-threaded download", "INFO")
+        
+        # Get key for status updates
+        row_data = self.data_df[self.data_df["URL"] == url]
+        if row_data.empty:
+            self.log_to_console(f"Could not find row for URL: {url}", "ERROR")
+            return
+        key = row_data["key"].values[0]
         self.log_to_console("Reason: Server doesn't support partial downloads", "INFO")
 
         downloads_dir = Path(self.download_dir_var.get()) / "Datasets"
@@ -1979,33 +1974,35 @@ class DiscogsDataProcessorUI(ttk.Frame):
             with open(file_path, "wb") as file:
                 for data in response.iter_content(block_size):
                     if self.stop_flag:
-                        ...
+                        file.close()
+                        file_path.unlink(missing_ok=True)
                         return
                     file.write(data)
                     downloaded_size += len(data)
-                    self.pb["value"] = downloaded_size
-                    self.pb.update()
+                    
+                    # Thread-safe UI update
+                    self.after(0, lambda d=downloaded_size: self.pb.configure(value=d))
 
                     elapsed = (datetime.now() - start_time).total_seconds()
-                    speed = (downloaded_size / elapsed) / (1024 * 1024) if elapsed > 0 else 0.0
-                    self.prog_speed_var.set(f'Speed: {speed:.2f} MB/s')
+                    if elapsed > 0:
+                        speed = (downloaded_size / elapsed) / (1024 * 1024)
+                        self.after(0, self.prog_speed_var.set, f'Speed: {speed:.2f} MB/s')
 
-                    if total_size > 0 and downloaded_size > 0:
-                        percentage = (downloaded_size / total_size) * 100
-                        left = int(
-                            (total_size - downloaded_size) / (downloaded_size / elapsed)) if downloaded_size > 0 else 0
-                        left_minutes = left // 60
-                        left_seconds = left % 60
-                        self.prog_time_left_var.set(f'Left: {left_minutes} min {left_seconds} sec')
-                        self.prog_message_var.set(f'Downloading: {percentage:.2f}%')
+                        if total_size > 0:
+                            percentage = (downloaded_size / total_size) * 100
+                            left = int((total_size - downloaded_size) / (downloaded_size / elapsed))
+                            left_minutes = left // 60
+                            left_seconds = left % 60
+                            self.after(0, self.prog_time_left_var.set, f'Left: {left_minutes} min {left_seconds} sec')
+                            self.after(0, self.prog_message_var.set, f'Downloading: {percentage:.2f}%')
 
             self.prog_message_var.set('Idle...')
             self.log_to_console(f"{filename} successfully downloaded: {file_path}", "INFO")
-            self.data_df.loc[self.data_df["URL"] == url, "Downloaded"] = "✔"
-            self.data_df.loc[self.data_df["URL"] == url, "Extracted"] = "✖"
-            self.data_df.loc[self.data_df["URL"] == url, "Processed"] = "✖"
-            self.populate_table(self.data_df)
-            self.update_downloaded_size()
+            self.data_df.loc[self.data_df["key"] == key, "Downloaded"] = "✔"
+            self.data_df.loc[self.data_df["key"] == key, "Extracted"] = "✖"
+            self.data_df.loc[self.data_df["key"] == key, "Processed"] = "✖"
+            self.after(0, lambda: self.populate_table(self.data_df))
+            self.after(0, self.update_downloaded_size)
 
             self.show_centered_popup(
                 "Download Complete",
@@ -2078,115 +2075,98 @@ class DiscogsDataProcessorUI(ttk.Frame):
             messagebox.showwarning("Warning", "No file selected!")
             return
 
-        if self.auto_mode_var.get():
-            # Auto Mode aktifse, tüm işlemleri otomatik zincirleme olarak başlat:
-            Thread(target=self.auto_mode_process, args=(checked_items,), daemon=True).start()
-        else:
-            # Normal modda, her dosya için download işlemini başlat.
-            for item in checked_items:
-                values = self.tree.item(item, "values")
-                month_val = values[1]
-                content_val = values[2]
-                size_val = values[3]
-                downloaded_val = values[4]
-                extracted_val = values[5]
-                processed_val = values[6]
-
+        # NEW: Capture data on the MAIN thread to avoid background GUI calls
+        selected_data = []
+        for item in checked_items:
+            try:
+                v = self.tree.item(item, "values")
+                month_val, content_val, size_val = v[1], v[2], v[3]
                 row_data = self.data_df[
                     (self.data_df["month"] == month_val) &
-                    (self.data_df["content"] == content_val) &
-                    (self.data_df["size"] == size_val) &
-                    (self.data_df["Downloaded"] == downloaded_val) &
-                    (self.data_df["Extracted"] == extracted_val) &
-                    (self.data_df["Processed"] == processed_val)
+                    (self.data_df["content"] == content_val)
                 ]
                 if not row_data.empty:
-                    url = row_data["URL"].values[0]
-                    folder_name = row_data["month"].values[0]  # key bazlı türetilen month
-                    filename = os.path.basename(url)
-                    self.start_download(url, filename, folder_name)
+                    selected_data.append({
+                        "url": row_data["URL"].values[0],
+                        "key": row_data["key"].values[0],
+                        "month": row_data["month"].values[0]
+                    })
+            except Exception as e:
+                self.log_to_console(f"CAPTURE ERROR: {e}", "ERROR")
+
+        if self.auto_mode_var.get():
+            # Pass pre-captured data to the thread
+            Thread(target=self.auto_mode_process, args=(selected_data,), daemon=True).start()
+        else:
+            for data in selected_data:
+                self.start_download(data["url"], os.path.basename(data["key"]), data["month"])
 
         # ─── AUTO MODE İŞLEMLERİNİ YÖNETEN YENİ METOD ─────────────────
-    def auto_mode_process(self, checked_items):
 
-            """
-            Auto Mode aktifken; seçili dosyalar için download, extract, chunking ve convert işlemlerini
-            sırasıyla gerçekleştiren zincirleme işlemi yapar. Her adımın tamamlanmasını bekler ve
-            tüm işlemler bittikten sonra bir popup ile kullanıcı bilgilendirilir.
-            """
-            self.auto_mode_start_time = datetime.now()
-            self.update_elapsed_timer()
-            # Seçili dosyalardan URL listesini elde edelim ve download işlemini başlatalım.
-            urls = []
-            for item in checked_items:
-                values = self.tree.item(item, "values")
-                month_val = values[1]
-                content_val = values[2]
-                size_val = values[3]
-                row_data = self.data_df[
-                    (self.data_df["month"] == month_val) &
-                    (self.data_df["content"] == content_val) &
-                    (self.data_df["size"] == size_val)
-                    ]
-                if not row_data.empty:
-                    url = row_data["URL"].values[0]
-                    urls.append(url)
-                    folder_name = row_data["month"].values[0]
-                    filename = os.path.basename(url)
-                    self.start_download(url, filename, folder_name)
-            self.log_to_console("Auto Mode: Download initiated. Waiting for downloads to complete...", "INFO")
+    def auto_mode_process(self, selected_data):
+        """
+        Auto Mode aktifken; seçili dosyalar için download, extract, chunking ve convert işlemlerini
+        sırasıyla gerçekleştiren zincirleme işlemi yapar.
+        """
+        self.auto_mode_start_time = datetime.now()
+        self.update_elapsed_timer()
+        
+        if not selected_data:
+            self.log_to_console("Auto Mode: No valid items found to process.", "WARNING")
+            return
 
-            # Bekleme: Tüm seçili dosyaların download tamamlanmasını bekle
-            while not self.stop_flag:
-                all_downloaded = True
-                for url in urls:
-                    row = self.data_df[self.data_df["URL"] == url]
-                    if not row.empty and row.iloc[0]["Downloaded"] != "✔":
-                        all_downloaded = False
-                        break
-                if all_downloaded:
-                    break
-                time.sleep(1)
-            if self.stop_flag:
-                return
+        # 1. DOWNLOAD
+        for data in selected_data:
+            url, key, folder_name = data["url"], data["key"], data["month"]
+            filename = os.path.basename(key)
+            self.start_download(url, filename, folder_name)
 
-            self.log_to_console("Auto Mode: Downloads complete. Starting extraction...", "INFO")
-            # Extraction işlemini tetikle (extract_selected metodu tüm seçili dosyaları işler)
-            self.extract_selected()
-            while not self.stop_flag:
-                all_extracted = True
-                for url in urls:
-                    row = self.data_df[self.data_df["URL"] == url]
-                    if not row.empty and row.iloc[0]["Extracted"] != "✔":
-                        all_extracted = False
-                        break
-                if all_extracted:
-                    break
-                time.sleep(1)
-            if self.stop_flag:
-                return
+        self.log_to_console("Auto Mode: Downloads initiated. Waiting...", "INFO")
+        while not self.stop_flag:
+            all_done = True
+            for data in selected_data:
+                row = self.data_df[self.data_df["key"] == data["key"]]
+                if not row.empty and row.iloc[0]["Downloaded"] != "✔":
+                    all_done = False; break
+            if all_done: break
+            time.sleep(1.0)
 
-            self.log_to_console("Auto Mode: Extraction complete. Starting conversion...", "INFO")
-            # Conversion işlemini başlat (convert_selected metodu tüm seçili dosyaları işler)
-            self.convert_selected()
-            while not self.stop_flag:
-                all_converted = True
-                for url in urls:
-                    row = self.data_df[self.data_df["URL"] == url]
-                    if not row.empty and row.iloc[0]["Processed"] != "✔":
-                        all_converted = False
-                        break
-                if all_converted:
-                    break
-                time.sleep(1)
-            if self.stop_flag:
-                return
+        if self.stop_flag: return
 
-            self.log_to_console("Auto Mode: All operations completed.", "INFO")
-            self.after(0,
-                       lambda: self.show_centered_popup("Auto Mode", "All operations completed successfully!", "info"))
+        # 2. EXTRACTION
+        self.log_to_console("Auto Mode: Downloads complete. Starting extraction...", "INFO")
+        self.after(0, lambda: self.extract_selected(items=selected_data))
+        
+        # Wait for extraction status update in data_df
+        while not self.stop_flag:
+            all_done = True
+            for data in selected_data:
+                row = self.data_df[self.data_df["key"] == data["key"]]
+                if not row.empty and row.iloc[0]["Extracted"] != "✔":
+                    all_done = False; break
+            if all_done: break
+            time.sleep(1.0)
 
-            self.auto_mode_start_time = None
+        if self.stop_flag: return
+
+        # 3. CONVERSION
+        self.log_to_console("Auto Mode: Extraction complete. Starting conversion...", "INFO")
+        self.after(0, lambda: self.convert_selected(items=selected_data))
+        
+        while not self.stop_flag:
+            all_done = True
+            for data in selected_data:
+                row = self.data_df[self.data_df["key"] == data["key"]]
+                if not row.empty and row.iloc[0]["Processed"] != "✔":
+                    all_done = False; break
+            if all_done: break
+            time.sleep(1.0)
+
+        if self.stop_flag: return
+
+        self.log_to_console("Auto Mode: All operations completed successfully!", "SUCCESS")
+        self.after(0, lambda: self.show_centered_popup("Auto Mode", "All operations completed successfully!", "info"))
+        self.auto_mode_start_time = None
     def extract_gz_file_with_progress(self, file_path: Path, callback):
         """
         Verilen .gz dosyasını çıkartır ve ilerleme durumunu UI’ye yansıtır.
@@ -2292,77 +2272,72 @@ class DiscogsDataProcessorUI(ttk.Frame):
                 auto_items.append(item)
         return auto_items
 
-    def extract_selected(self):
-        # 1) Seçili (işaretli) itemleri al
-        checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
-        if not checked_items:
-            self.log_to_console("No file selected for extraction!", "WARNING")
-            # Eski mantık: Auto Mode kapalıysa popup gösterelim.
-            # Ama isterseniz, Auto Mode açıkken de gösterebilirsiniz.
-            if not self.auto_mode_var.get():
-                self.show_centered_popup("Extraction Error", "No file selected for extraction!", "warning")
-            return
+    def extract_selected(self, items=None):
+        # 1) Get items either from parameter or from check_vars
+        if items is not None:
+            # Assume items is already a list of dictionaries with 'url', 'key', 'month'
+            data_to_extract = items
+        else:
+            checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
+            if not checked_items:
+                self.log_to_console("No file selected for extraction!", "WARNING")
+                if not self.auto_mode_var.get():
+                    self.show_centered_popup("Extraction Error", "No file selected for extraction!", "warning")
+                return
+            
+            # Capture data on main thread
+            data_to_extract = []
+            for item in checked_items:
+                try:
+                    v = self.tree.item(item, "values")
+                    month_val, content_val = v[1], v[2]
+                    row_data = self.data_df[(self.data_df["month"] == month_val) & (self.data_df["content"] == content_val)]
+                    if not row_data.empty:
+                        data_to_extract.append({
+                            "url": row_data["URL"].values[0],
+                            "key": row_data["key"].values[0],
+                            "month": row_data["month"].values[0]
+                        })
+                except Exception as e:
+                    self.log_to_console(f"CAPTURE ERROR: {e}", "ERROR")
 
-        # 2) Hem Auto Mode açıkken hem de Normal Mode'da, tablo "Downloaded=✖" ise hata verip iptal edelim.
-        for item in checked_items:
-            values = self.tree.item(item, "values")
-            # values sırası: [" ", month, content, size, Downloaded, Extracted, Processed]
-            downloaded_status = values[4]  # 4. index -> "Downloaded"
-            if downloaded_status != "✔":
-                # HATA: Seçilen dosya indirilmeyen statüde görünüyor, uyarı ver.
-                self.log_to_console("Attempt to extract a not-downloaded file.", "ERROR")
-                self.show_centered_popup(
-                    "Extraction Error",
-                    "You cannot extract a file that is not downloaded!",
-                    "error"
-                )
-                return  # Metodu tamamen iptal
+        # 2) Check if all files are downloaded
+        for data in data_to_extract:
+            row = self.data_df[self.data_df["key"] == data["key"]]
+            if not row.empty and row.iloc[0]["Downloaded"] != "✔":
+                self.log_to_console(f"Cannot extract {data['key']} - not downloaded.", "ERROR")
+                self.show_centered_popup("Extraction Error", "You cannot extract a file that is not downloaded!", "error")
+                return
 
-        # 3) Yukarıdaki döngüde "Downloaded=✖" durumu yoksa devam
         self.log_to_console("Starting extraction of selected file(s)...", "INFO")
         self.prog_message_var.set('Preparing extraction...')
+        self.after(2000, lambda: self.extract_selected_thread(data_to_extract))
 
-        # Burada 2 saniyelik bekleme var (orijinal kodunuz). Dilerseniz kaldırabilirsiniz.
-        self.after(2000, lambda: self.extract_selected_thread(checked_items))
-
-    def extract_selected_thread(self, checked_items):
+    def extract_selected_thread(self, data_list):
         self.start_status_indicator()
         self.prog_message_var.set('Extracting now...')
         extracted_files = []
-        items_list = list(checked_items)
+        items_to_process = list(data_list)
 
         def process_next_item():
-            if not items_list:
+            if not items_to_process:
                 self.populate_table(self.data_df)
                 self.stop_status_indicator()
 
-                if self.auto_mode_var.get() and extracted_files:
-                    self.log_to_console("Extraction complete. Starting automatic conversion...", "INFO")
-                    self.after(1000, lambda: self.convert_selected(extracted_files))
-                elif not self.auto_mode_var.get():
+                if not self.auto_mode_var.get():
                     if extracted_files:
-                        message = f"{extracted_files[-1].name} successfully extracted"
+                        message = f"Successfully extracted {len(extracted_files)} files"
                     else:
                         message = "No files were extracted"
                     self.show_centered_popup("Extraction Completed", message, "info")
                 return
 
-            item = items_list.pop(0)
-            values = self.tree.item(item, "values")
-            month_val, content_val, size_val, downloaded_val, extracted_val, processed_val = values[1:]
-
-            row_data = self.data_df[
-                (self.data_df["month"] == month_val) &
-                (self.data_df["content"] == content_val) &
-                (self.data_df["size"] == size_val)
-                ]
-            if row_data.empty:
-                self.after(0, process_next_item)
-                return
-
-            url = row_data["URL"].values[0]
-            folder_name = row_data["month"].values[0]
-            filename = os.path.basename(url)
+            data = items_to_process.pop(0)
+            # Use data directly from the dictionary (captured on main thread)
+            url = data["url"]
+            key = data["key"]
+            folder_name = data["month"]
+            filename = os.path.basename(key)
             file_path = Path(self.download_dir_var.get()) / "Datasets" / folder_name / filename
 
             if file_path.suffix.lower() == ".gz":
@@ -2414,8 +2389,9 @@ class DiscogsDataProcessorUI(ttk.Frame):
                     continue
 
                 url = row_data["URL"].values[0]
+                key = row_data["key"].values[0]
                 folder_name = row_data["month"].values[0]
-                filename = os.path.basename(url)
+                filename = os.path.basename(key)
                 extracted_file = (Path(self.download_dir_var.get()) / "Datasets" / folder_name / filename).with_suffix(
                     "")
 
@@ -2493,57 +2469,60 @@ class DiscogsDataProcessorUI(ttk.Frame):
         except queue.Empty:
             self.after(100, self.handle_extract_status, q)
 
-    def convert_selected(self, extracted_files=None):
-        # 1) Eğer metod parametresinde bir liste verilmediyse (Auto Mode veya dahili çağrı değilse):
-        if extracted_files is None:
+    def convert_selected(self, extracted_files_list=None, items=None):
+        # 1) Get extracted_files either from parameters or from check_vars
+        extracted_files = []
+        if extracted_files_list is not None:
+            extracted_files = extracted_files_list
+        elif items is not None:
+            # Prepare Path objects from data dicts
+            for data in items:
+                filename = os.path.basename(data["key"])
+                extracted_file = (
+                    Path(self.download_dir_var.get()) / 
+                    "Datasets" / 
+                    data["month"] / 
+                    filename
+                ).with_suffix('')
+                extracted_files.append(extracted_file)
+        else:
             checked_items = [item for item, var in self.check_vars.items() if var.get() == 1]
             if not checked_items:
                 self.log_to_console("No file selected for conversion!", "WARNING")
-                # Eski mantık: Auto Mode kapalıysa popup gösteriliyor.
-                # Ama isterseniz Auto Mode açıkken de gösterilmesini sağlayabilirsiniz.
                 if not self.auto_mode_var.get():
                     self.show_centered_popup("Conversion Error", "No file selected for conversion!", "warning")
                 return
 
-            # 2) Seçili satırlarda `Extracted` sütunu “✔” mi diye kontrol edelim.
-            # İki modda da (Auto Mode açık veya kapalı) "Extracted=✖" olan satır varsa hata popup'ı gösterip iptal ediyoruz.
+            # Capture data on main thread and check status
             for item in checked_items:
-                values = self.tree.item(item, "values")
-                # values sırası: [" ", month, content, size, Downloaded, Extracted, Processed]
-                extracted_status = values[5]  # 5. index -> "Extracted"
-                if extracted_status != "✔":
-                    # HATA: Seçilen dosya çıkarılmamış durumda
-                    self.log_to_console("Attempt to convert a file that is not extracted.", "ERROR")
-                    self.show_centered_popup(
-                        "Conversion Error",
-                        "You cannot convert a file that is not extracted!\n"
-                        "Please download and extract it first.",
-                        "error"
-                    )
-                    return
+                try:
+                    v = self.tree.item(item, "values")
+                    month_val, content_val, size_val = v[1], v[2], v[3]
+                    
+                    if v[5] != "✔": # Extracted col
+                        self.log_to_console(f"Cannot convert {content_val} ({month_val}) - not extracted.", "ERROR")
+                        continue
 
-            # 3) Seçili satırların her biri için .xml dosya yolunu bulalım
-            extracted_files = []
-            for item in checked_items:
-                values = self.tree.item(item, "values")
-                month_val, content_val, size_val = values[1], values[2], values[3]
-                row_data = self.data_df[
-                    (self.data_df["month"] == month_val) &
-                    (self.data_df["content"] == content_val) &
-                    (self.data_df["size"] == size_val)
+                    row_data = self.data_df[
+                        (self.data_df["month"] == month_val) &
+                        (self.data_df["content"] == content_val)
                     ]
-                if not row_data.empty:
-                    url = row_data["URL"].values[0]
-                    folder_name = row_data["month"].values[0]
-                    filename = os.path.basename(url)
-                    # Dosya adı + .xml
-                    extracted_file = (
+                    if not row_data.empty:
+                        key = row_data["key"].values[0]
+                        folder_name = row_data["month"].values[0]
+                        filename = os.path.basename(key)
+                        extracted_file = (
                             Path(self.download_dir_var.get()) /
                             "Datasets" /
                             folder_name /
                             filename
-                    ).with_suffix('')
-                    extracted_files.append(extracted_file)
+                        ).with_suffix('')
+                        extracted_files.append(extracted_file)
+                except Exception as e:
+                    self.log_to_console(f"CAPTURE ERROR: {e}", "ERROR")
+
+        if not extracted_files:
+            return
 
         # 4) Belirlenen extracted_files listesi üzerinden dönüştürme işlemine başla
         self.start_status_indicator()
@@ -2689,40 +2668,6 @@ class DiscogsDataProcessorUI(ttk.Frame):
         self.log_to_console("Fetching data, please wait...", "INFO")
         Thread(target=self._scrape_data_s3, daemon=True).start()
 
-    def _scrape_data_s3(self):
-        try:
-            base_url = "https://discogs-data-dumps.s3.us-west-2.amazonaws.com/"
-            prefix = "data/"
-            self.log_to_console("Listing directories from S3...", "INFO")
-            dirs = list_directories_from_s3(base_url, prefix)
-            if not dirs:
-                self.log_to_console("No directories found.", "WARNING")
-                return
-
-            dirs.sort()
-            latest_dir = dirs[-1]
-            self.log_to_console(f"Latest directory selected: {latest_dir}", "INFO")
-
-            data_df = list_files_in_directory(base_url, latest_dir)
-            if not data_df.empty:
-                data_df["last_modified"] = pd.to_datetime(data_df["last_modified"])
-                data_df["month"] = data_df["last_modified"].dt.to_period("M").astype(str)
-                data_df = data_df[data_df["content"] != "checksum"]
-                content_order = {"artists": 1, "labels": 2, "masters": 3, "releases": 4}
-                data_df["content_order"] = data_df["content"].map(content_order)
-                data_df = data_df.sort_values(by=["month", "content_order"], ascending=[False, True])
-                data_df.drop(columns=["content_order"], inplace=True)
-                data_df = self.mark_downloaded_files(data_df)
-                self.data_df = data_df
-                self.populate_table(data_df)
-                self.save_to_file()
-                self.log_to_console("Scraping completed. Data saved automatically.", "INFO")
-            else:
-                self.log_to_console("No data found in the latest directory.", "WARNING")
-        except requests.exceptions.RequestException as e:
-            self.log_to_console(f"Network error: {e}", "ERROR")
-        except Exception as e:
-            self.log_to_console(f"Error: {e}", "ERROR")
 
     def start_status_indicator(self):
         """Start the status indicator blinking"""
